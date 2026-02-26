@@ -1,0 +1,30 @@
+[
+  {
+    "id": "gravity-flip",
+    "displayName": "Gravity Flip",
+    "cooldown": 15,
+    "duration": 3,
+    "description": "Reverse ball gravity for 3 seconds"
+  },
+  {
+    "id": "speed-burst",
+    "displayName": "Speed Burst",
+    "cooldown": 12,
+    "duration": 2,
+    "description": "Triple your movement speed for 2 seconds"
+  },
+  {
+    "id": "ball-freeze",
+    "displayName": "Ball Freeze",
+    "cooldown": 20,
+    "duration": 1,
+    "description": "Lock the ball in place for 1 second"
+  },
+  {
+    "id": "mega-bounce",
+    "displayName": "Mega Bounce",
+    "cooldown": 18,
+    "duration": 0,
+    "description": "Next kick impulse multiplied by 2.5x"
+  }
+]

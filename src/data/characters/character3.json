@@ -1,0 +1,20 @@
+{
+  "id": "human_athlete",
+  "displayName": "Human Athlete",
+  "modelPath": "assets/models/characters/human_athlete.glb",
+  "stats": {
+    "speed": 8,
+    "jump": 1.2,
+    "power": 120,
+    "spin": 80
+  },
+  "superpowerAbility": "mega-bounce",
+  "limitation": "Balanced allrounder",
+  "animationMap": {
+    "IDLE": "idle",
+    "MOVING": "walk",
+    "JUMPING": "jump",
+    "KICKING": "kick",
+    "STUNNED": "stunned"
+  }
+}

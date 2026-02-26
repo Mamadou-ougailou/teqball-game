@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Temporary files
+.temp/
+*.tmp
+
+# Asset source files (not compiled)
+assets/textures/raw/*
+!assets/textures/raw/.gitkeep

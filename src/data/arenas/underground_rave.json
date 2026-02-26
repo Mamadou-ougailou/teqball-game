@@ -1,0 +1,9 @@
+{
+  "id": "underground_rave",
+  "displayName": "Underground Rave",
+  "skyboxPath": "assets/skybox/underground_rave.env",
+  "fogColor": "#1a0033",
+  "gravityModifier": 1.0,
+  "ambientParticlesPath": "assets/particles/neon_sparks.json",
+  "backgroundMusicPath": "assets/audio/music/underground_rave.ogg"
+}

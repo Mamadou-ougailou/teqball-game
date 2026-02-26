@@ -1,0 +1,9 @@
+{
+  "id": "space_station",
+  "displayName": "Space Station",
+  "skyboxPath": "assets/skybox/space_station.env",
+  "fogColor": "#0a0a0a",
+  "gravityModifier": 0.5,
+  "ambientParticlesPath": "assets/particles/space_dust.json",
+  "backgroundMusicPath": "assets/audio/music/space_station.ogg"
+}

@@ -1,0 +1,18 @@
+{
+  "match": {
+    "maxTouchesPerPlayer": 3,
+    "pointsPerSet": 25,
+    "setsToWin": 2,
+    "minPointLeadToWinSet": 2
+  },
+  "faults": {
+    "netTouchFault": "opponent scores",
+    "handTouchAboveNetFault": "opponent scores",
+    "boundaryFault": "opponent scores",
+    "touchOverLimitFault": "opponent scores"
+  },
+  "serve": {
+    "serveRotation": "every 2 points",
+    "firstServeTeam": "coin flip"
+  }
+}

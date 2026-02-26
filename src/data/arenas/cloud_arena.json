@@ -1,0 +1,9 @@
+{
+  "id": "cloud_arena",
+  "displayName": "Cloud Arena",
+  "skyboxPath": "assets/skybox/cloud_arena.env",
+  "fogColor": "#87CEEB",
+  "gravityModifier": 1.0,
+  "ambientParticlesPath": "assets/particles/cloud_dust.json",
+  "backgroundMusicPath": "assets/audio/music/cloud_arena.ogg"
+}
