@@ -23,8 +23,6 @@ export class AssetManager implements IEntity {
   // Map model name → path under /models/
   private static readonly _paths: Record<string, string> = {
     table:        'table.glb',
-    player01:     'player01.glb',
-    player02:     'player02.glb',
     ball01:       'ball01.glb',
     character:    'character.glb',
     character_p2: 'character.glb',  // second independent load for player 2
