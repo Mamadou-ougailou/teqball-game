@@ -9,6 +9,11 @@ export default defineConfig({
     strictPort: false,
     open: true,
     hmr: true,
+    headers: {
+      // Required for SharedArrayBuffer (Havok physics) and correct WASM MIME type
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
   },
   build: {
     outDir: 'dist',

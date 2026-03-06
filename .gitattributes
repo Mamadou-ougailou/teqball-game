@@ -3,6 +3,9 @@
 *.glb filter=lfs diff=lfs merge=lfs -text
 *.gltf filter=lfs diff=lfs merge=lfs -text
 
+# Physics WASM binary
+*.wasm filter=lfs diff=lfs merge=lfs -text
+
 # Textures
 *.png filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
