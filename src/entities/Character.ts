@@ -11,12 +11,17 @@ export class Character implements ICharacter {
   readonly id: number;
   readonly stats: CharacterStats;
   readonly currentState: CharacterState = CharacterState.IDLE;
-  readonly position: Vector3 = Vector3.Zero();
-  readonly mesh: AbstractMesh = new AbstractMesh('character-placeholder');
-  readonly skeleton: Skeleton | null = null;
+  readonly mesh: AbstractMesh;
+  readonly skeleton: Skeleton | null;
 
-  constructor(id: number, stats: CharacterStats) {
+  get position(): Vector3 {
+    return this.mesh.position;
+  }
+
+  constructor(id: number, mesh: AbstractMesh, skeleton: Skeleton | null, stats: CharacterStats) {
     this.id = id;
+    this.mesh = mesh;
+    this.skeleton = skeleton;
     this.stats = stats;
   }
 

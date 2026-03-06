@@ -3,31 +3,46 @@ import { IBallSystem } from '@core/interfaces';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 
 /**
- * Ball entity - Physics-driven ball with kick impulse
- * TODO Phase 1: Setup sphere physics, velocity tracking, effects
+ * Ball entity - thin wrapper around the procedural sphere mesh.
+ * Physics is applied externally via PhysicsAggregate in main.ts.
  */
 export class Ball implements IBallSystem {
-  readonly velocity: Vector3 = Vector3.Zero();
-  readonly position: Vector3 = Vector3.Zero();
-  readonly mesh: AbstractMesh = new AbstractMesh('ball-placeholder');
+  private _mesh: AbstractMesh;
 
-  applyKickImpulse(_direction: Vector3, _power: number): void {
-    // TODO Phase 1
+  constructor(mesh: AbstractMesh) {
+    this._mesh = mesh;
   }
 
-  applyEffect(_effectId: string): void {
-    // TODO Phase 4
+  get mesh(): AbstractMesh { return this._mesh; }
+  get position(): Vector3 { return this._mesh.position.clone(); }
+  get velocity(): Vector3 {
+    return this._mesh.physicsBody
+      ? this._mesh.physicsBody.getLinearVelocity()
+      : Vector3.Zero();
   }
 
-  resetPosition(_position: Vector3): void {
-    // TODO Phase 1
+  applyKickImpulse(direction: Vector3, power: number): void {
+    if (this._mesh.physicsBody) {
+      this._mesh.physicsBody.applyImpulse(
+        direction.scale(power),
+        this._mesh.getAbsolutePosition()
+      );
+    }
   }
 
-  update(_deltaTime: number): void {
-    // TODO Phase 1
+  applyEffect(_effectId: string): void {}
+
+  resetPosition(position: Vector3): void {
+    this._mesh.position = position.clone();
+    if (this._mesh.physicsBody) {
+      this._mesh.physicsBody.setLinearVelocity(Vector3.Zero());
+      this._mesh.physicsBody.setAngularVelocity(Vector3.Zero());
+    }
   }
+
+  update(_deltaTime: number): void {}
 
   dispose(): void {
-    // TODO Phase 1
+    this._mesh.dispose();
   }
 }
