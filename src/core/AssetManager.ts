@@ -1,5 +1,6 @@
 import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
+import { AssetContainer } from '@babylonjs/core/assetContainer';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
@@ -13,73 +14,83 @@ export interface ModelData {
 }
 
 /**
- * AssetManager - Handles loading of .glb models
- * Wraps BabylonJS SceneLoader with a simple name-based API.
+ * AssetManager — loads GLB files via AssetContainer so the same file can be
+ * instantiated any number of times without Babylon name-collision errors.
+ *
+ * Each call to loadModel() returns a FRESH set of meshes, skeletons and
+ * animation groups cloned into the scene from the shared container.
+ * The underlying file is fetched only once per unique path.
  */
 export class AssetManager implements IEntity {
   private _scene: Scene;
-  private _cache: Map<string, ModelData> = new Map();
 
-  // Map model name → path under /models/
+  /** One container per unique file path — loaded once and never added to scene. */
+  private _containers: Map<string, AssetContainer> = new Map();
+
+  // Map model name → GLB path served under /models/
   private static readonly _paths: Record<string, string> = {
-    table:        'table.glb',
-    ball01:       'ball01.glb',
-    character:    'character.glb',
-    character_p2: 'character.glb',  // second independent load for player 2
+    table:     'table.glb',
+    ball01:    'ball01.glb',
+    character: 'character.glb',
   };
 
   constructor(scene: Scene) {
     this._scene = scene;
   }
 
-  /** Pre-load all known assets so they are ready when needed. */
+  /** Pre-load every unique file into its AssetContainer. */
   async loadAllAssets(): Promise<void> {
-    // Load each unique file path exactly once in parallel.
-    // Aliases that share the same file (e.g. character_p2 → character.glb)
-    // are intentionally skipped here: Babylon cannot import the same file
-    // twice concurrently without errors.  Those aliases load lazily the first
-    // time loadModel() is called for them from main.ts.
-    const seenPaths = new Set<string>();
-    const uniqueKeys = Object.keys(AssetManager._paths).filter(key => {
-      const path = AssetManager._paths[key];
-      if (seenPaths.has(path)) return false;
-      seenPaths.add(path);
-      return true;
-    });
-    await Promise.all(uniqueKeys.map(name => this.loadModel(name)));
+    await Promise.all(
+      Object.keys(AssetManager._paths).map(name => this._ensureContainer(name))
+    );
   }
 
-  /** Load (or return cached) a named model. Returns meshes + skeletons. */
+  /**
+   * Instantiate a fresh copy of the named model into the active scene.
+   * Can be called multiple times for the same name — each call returns
+   * an independent set of meshes and animation groups.
+   */
   async loadModel(name: string): Promise<ModelData> {
-    if (this._cache.has(name)) {
-      return this._cache.get(name)!;
-    }
+    const container = await this._ensureContainer(name);
 
-    const file = AssetManager._paths[name];
-    if (!file) {
-      throw new Error(`Unknown model name: "${name}"`);
-    }
+    // instantiateModelsToScene creates unique clones with independent transforms
+    // and fully retargeted animation groups — no shared state between instances.
+    const instance = container.instantiateModelsToScene(
+      /* nameFunction */ undefined,
+      /* cloneAnimations */ true
+    );
 
-    // Try /models/ first, fall back to /assets/models/
-    let result;
-    try {
-      result = await SceneLoader.ImportMeshAsync('', '/models/', file, this._scene);
-    } catch {
-      result = await SceneLoader.ImportMeshAsync('', '/assets/models/', file, this._scene);
-    }
-
-    const data: ModelData = {
-      meshes:          result.meshes as AbstractMesh[],
-      skeletons:       result.skeletons,
-      animationGroups: result.animationGroups,
+    return {
+      meshes:          instance.rootNodes.flatMap(n => [n, ...n.getChildMeshes()]) as AbstractMesh[],
+      skeletons:       instance.skeletons,
+      animationGroups: instance.animationGroups,
     };
-    this._cache.set(name, data);
-    return data;
+  }
+
+  /** Load and cache an AssetContainer for the given model name. */
+  private async _ensureContainer(name: string): Promise<AssetContainer> {
+    const file = AssetManager._paths[name];
+    if (!file) throw new Error(`Unknown model name: "${name}"`);
+
+    if (this._containers.has(file)) {
+      return this._containers.get(file)!;
+    }
+
+    let container: AssetContainer;
+    try {
+      container = await SceneLoader.LoadAssetContainerAsync('/models/', file, this._scene);
+    } catch {
+      container = await SceneLoader.LoadAssetContainerAsync('/assets/models/', file, this._scene);
+    }
+
+    this._containers.set(file, container);
+    return container;
   }
 
   update(_deltaTime: number): void {}
 
   dispose(): void {
-    this._cache.clear();
+    this._containers.forEach(c => c.dispose());
+    this._containers.clear();
   }
 }

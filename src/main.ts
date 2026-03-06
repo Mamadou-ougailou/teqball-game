@@ -435,10 +435,10 @@ async function main(): Promise<void> {
       }
     }
 
-    // Create player 2  — same model, independent scene load, pos-Z side
+    // Create player 2  — second independent instantiation of the same container
     const p2Stats: CharacterStats = { speed: 8, jump: 1.2, power: 100, spin: 80 };
-    const charData2 = await assetManager.loadModel('character_p2');
-    if (charData2.meshes.length === 0) throw new Error('character_p2 model has no meshes');
+    const charData2 = await assetManager.loadModel('character');
+    if (charData2.meshes.length === 0) throw new Error('character model (p2) has no meshes');
 
     const charRoot2 = charData2.meshes[0];
     charData2.meshes.forEach(m => { m.scaling = new Vector3(charScale1, charScale1, charScale1); });
@@ -446,6 +446,17 @@ async function main(): Promise<void> {
     player2 = new Character(1, charRoot2, charData2.skeletons[0] ?? null, p2Stats, charData2.animationGroups);
     charRoot2.position = new Vector3(0, 0, 3.0 * SCALE);
     charRoot2.rotation = new Vector3(0, Math.PI, 0); // faces -Z (toward table)
+
+    // Capsule collider for player 2
+    const p2PhysMesh = charData2.meshes.find(m => m.getTotalVertices() > 0);
+    if (p2PhysMesh) {
+      new PhysicsAggregate(p2PhysMesh, PhysicsShapeType.CAPSULE,
+        { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
+      if (p2PhysMesh.physicsBody?.shape) {
+        p2PhysMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
+        p2PhysMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
+      }
+    }
 
 
 
