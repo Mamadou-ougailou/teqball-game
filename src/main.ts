@@ -411,14 +411,15 @@ async function main(): Promise<void> {
     const charData1 = await assetManager.loadModel('character');
     if (charData1.meshes.length === 0) throw new Error('character model has no meshes');
 
-    // Scale to ~1.8 m tall
+    // Scale to ~1.8 m tall using the root node only (applying to every child
+    // would double-scale the geometry inside the hierarchy).
     const charRoot1 = charData1.meshes[0];
     charRoot1.scaling = new Vector3(1, 1, 1);
     charRoot1.computeWorldMatrix(true);
     const charBounds1 = charRoot1.getHierarchyBoundingVectors(true);
     const charHeight1 = charBounds1.max.y - charBounds1.min.y;
     const charScale1  = charHeight1 > 0 ? 1.8 / charHeight1 : 1;
-    charData1.meshes.forEach(m => { m.scaling = new Vector3(charScale1, charScale1, charScale1); });
+    charRoot1.scaling = new Vector3(charScale1, charScale1, charScale1);
 
     player1 = new Character(0, charRoot1, charData1.skeletons[0] ?? null, p1Stats, charData1.animationGroups);
     charRoot1.position = new Vector3(0, 0, -3.0 * SCALE);
@@ -441,7 +442,7 @@ async function main(): Promise<void> {
     if (charData2.meshes.length === 0) throw new Error('character model (p2) has no meshes');
 
     const charRoot2 = charData2.meshes[0];
-    charData2.meshes.forEach(m => { m.scaling = new Vector3(charScale1, charScale1, charScale1); });
+    charRoot2.scaling = new Vector3(charScale1, charScale1, charScale1);
 
     player2 = new Character(1, charRoot2, charData2.skeletons[0] ?? null, p2Stats, charData2.animationGroups);
     charRoot2.position = new Vector3(0, 0, 3.0 * SCALE);

@@ -31,6 +31,8 @@ export class AssetManager implements IEntity {
 
   /** One container per unique file path — loaded once and never added to scene. */
   private _containers: Map<string, AssetContainer> = new Map();
+  /** How many times each file has been instantiated into the scene. */
+  private _instanceCount: Map<string, number> = new Map();
 
   // Map model name → GLB path served under /models/
   private static readonly _paths: Record<string, string> = {
@@ -51,22 +53,42 @@ export class AssetManager implements IEntity {
   }
 
   /**
-   * Instantiate a fresh copy of the named model into the active scene.
-   * Can be called multiple times for the same name — each call returns
-   * an independent set of meshes and animation groups.
+   * Load a model into the scene.  The FIRST call for a given file uses
+   * container.addAllToScene() which replicates the old ImportMeshAsync
+   * behaviour exactly — the container's own mesh/skeleton/animation objects
+   * land in the scene unchanged.
+   *
+   * SUBSEQUENT calls use instantiateModelsToScene(cloneAnimations=true) to
+   * produce a fully independent second (third, …) copy with its own skeleton
+   * and retargeted animation groups.
    */
   async loadModel(name: string): Promise<ModelData> {
     const container = await this._ensureContainer(name);
+    const file = AssetManager._paths[name];
+    const count = this._instanceCount.get(file) ?? 0;
+    this._instanceCount.set(file, count + 1);
 
-    // instantiateModelsToScene creates unique clones with independent transforms
-    // and fully retargeted animation groups — no shared state between instances.
+    if (count === 0) {
+      // First instance — add container assets directly to the scene.
+      // Animation groups already target these meshes; no retargeting needed.
+      container.addAllToScene();
+      return {
+        meshes:          container.meshes as AbstractMesh[],
+        skeletons:       container.skeletons,
+        animationGroups: container.animationGroups,
+      };
+    }
+
+    // Second+ instance — stamp out a fully independent clone.
     const instance = container.instantiateModelsToScene(
-      /* nameFunction */ undefined,
+      /* nameFunction  */ undefined,
       /* cloneAnimations */ true
     );
-
+    // Include root node at index 0 to mirror the addAllToScene structure
+    // so callers can always use meshes[0] for position / rotation.
     return {
-      meshes:          instance.rootNodes.flatMap(n => [n, ...n.getChildMeshes()]) as AbstractMesh[],
+      meshes:          instance.rootNodes.flatMap(n =>
+                         [n as unknown as AbstractMesh, ...n.getChildMeshes()]) as AbstractMesh[],
       skeletons:       instance.skeletons,
       animationGroups: instance.animationGroups,
     };
@@ -111,5 +133,6 @@ export class AssetManager implements IEntity {
   dispose(): void {
     this._containers.forEach(c => c.dispose());
     this._containers.clear();
+    this._instanceCount.clear();
   }
 }

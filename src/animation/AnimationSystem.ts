@@ -8,25 +8,39 @@ import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 // Adjust these numbers based on the console output that lists all clip names
 // at load time (look for '[AnimationSystem] clip[N]: ...' lines).
 // -----------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Animation index map
+//
+// IMPORTANT: this GLB was exported from Blender with 18 separate Mixamo
+// armatures (one per FBX clip).  Each animation group only drives the bones
+// of its own armature.  The VISIBLE mesh is skinned to Armature index 0.
+// Therefore only animation group 0 will visually animate the character;
+// the other groups animate shadow armatures that are not bound to any mesh.
+//
+// Once the Blender file is re-exported with a single merged armature (NLA
+// bake), update the indices below to match the new clip order.
+// ---------------------------------------------------------------------------
 export const PLAYER_ANIM = {
-  header:       0,   // Header.fbx
-  headerBall1:  1,   // Header Soccerball (variant 1)
-  headerBall2:  2,   // Header Soccerball (variant 2)
-  jogBackDiag1: 3,   // Jog Backward Diagonal (variant 1)
-  jogBackDiag2: 4,   // Jog Backward Diagonal (variant 2)
-  jogBack:      5,   // Jog Backward
-  jogFwdDiag1:  6,   // Jog Forward Diagonal (variant 1)
-  jogFwdDiag2:  7,   // Jog Forward Diagonal (variant 2)
-  jogForward:   8,   // Jog Forward
-  strafeLeft:   9,   // Jog Strafe Left
-  strafeRight:  10,  // Jog Strafe Right
-  kick1:        11,  // Kick Soccerball (variant 1)
-  kick2:        12,  // Kick Soccerball (variant 2)
-  knee1:        13,  // Kneeing Soccerball (variant 1)
-  knee2:        14,  // Kneeing Soccerball (variant 2)
-  scissorKick:  15,  // Scissor Kick
-  idle:         16,  // Transition (standing idle / root pose)
-  extra:        17,  // extra / bind-pose clip
+  // All currently point to group 0 (the only group that targets the
+  // visible skinned mesh).  Tune these after a proper single-armature export.
+  idle:         0,
+  jogForward:   0,
+  jogBack:      0,
+  strafeLeft:   0,
+  strafeRight:  0,
+  kick2:        0,
+  scissorKick:  0,
+  header:       0,
+  headerBall1:  0,
+  headerBall2:  0,
+  jogBackDiag1: 0,
+  jogBackDiag2: 0,
+  jogFwdDiag1:  0,
+  jogFwdDiag2:  0,
+  kick1:        0,
+  knee1:        0,
+  knee2:        0,
+  extra:        0,
 } as const;
 
 export type PlayerAnimKey = keyof typeof PLAYER_ANIM;
