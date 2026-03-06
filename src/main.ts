@@ -300,6 +300,10 @@ async function main(): Promise<void> {
       // Add physics to table using the exact mesh geometry.
       // The table is one solid closed mesh — MESH shape traces every triangle,
       // preserving the curved surface and the net ridge precisely.
+      //
+      // Restitution 0.72: realistic teqball table coefficient (~0.70–0.76).
+      // Havok uses max(r_ball, r_table) as the combined restitution so
+      // keeping both values at 0.72 gives a predictable 0.72 combined bounce.
       tableData.meshes.forEach((mesh) => {
         const totalVertices = mesh.getTotalVertices();
         if (totalVertices > 0) {
@@ -307,7 +311,7 @@ async function main(): Promise<void> {
             new PhysicsAggregate(
               mesh,
               PhysicsShapeType.MESH,
-              { mass: 0, restitution: 0.92, friction: 0.15 },
+              { mass: 0, restitution: 0.72, friction: 0.20 },
               gameScene
             );
           } catch (_err) {
@@ -315,14 +319,24 @@ async function main(): Promise<void> {
             new PhysicsAggregate(
               mesh,
               PhysicsShapeType.CONVEX_HULL,
-              { mass: 0, restitution: 0.92, friction: 0.15 },
+              { mass: 0, restitution: 0.72, friction: 0.20 },
               gameScene
             );
           }
-          // Table is static world geometry — only the ball needs to interact with it
+
           if (mesh.physicsBody?.shape) {
+            // Table is static world geometry — only the ball needs to interact
             mesh.physicsBody.shape.filterMembershipMask = COL_WORLD;
             mesh.physicsBody.shape.filterCollideMask    = COL_BALL;
+
+            // Mesh welding: when a sphere rolls over a MESH shape, every internal
+            // triangle edge produces an abrupt normal flip that sends the ball
+            // sideways.  HP_Shape_SetWeldingType(shape, 3) merges adjacent triangle
+            // normals (TWO_SIDED mode) so the contact normal transitions smoothly.
+            const hpShape = (mesh.physicsBody.shape as any)._pluginData?.hpShape as unknown;
+            if (hk && hpShape !== undefined) {
+              (hk['HP_Shape_SetWeldingType'] as Function)?.(hpShape, 3);
+            }
           }
         }
       });
@@ -362,10 +376,11 @@ async function main(): Promise<void> {
     ball = new Ball(ballGeomMesh);
 
     // PhysicsAggregate on the geometry mesh — bounding sphere is now correct.
+    // Restitution 0.72 matches the table so combined bounce = max(0.72, 0.72) = 0.72.
     new PhysicsAggregate(
       ballGeomMesh,
       PhysicsShapeType.SPHERE,
-      { mass: 0.057, restitution: 0.85, friction: 0.3 },
+      { mass: 0.057, restitution: 0.72, friction: 0.3 },
       gameScene
     );
 
@@ -379,12 +394,15 @@ async function main(): Promise<void> {
         ballGeomMesh.physicsBody.shape.filterCollideMask    = COL_WORLD | COL_PLAYER;
       }
 
-      // Prevent Havok from auto-sleeping the ball mid-rally.
-      // HP_Body_SetDeactivationEnabled(body, false) disables the automatic
-      // velocity-threshold sleep for this body only — all other bodies are unaffected.
       const hpBallBody = (ballGeomMesh.physicsBody as any)._pluginData?.hpBody as unknown;
       if (hk && hpBallBody !== undefined) {
+        // No auto-sleep mid-rally.
         (hk['HP_Body_SetDeactivationEnabled'] as Function)?.(hpBallBody, false);
+
+        // Quality type BULLET (5) enables continuous collision detection for this
+        // body so a fast-moving ball cannot partially tunnel through the table
+        // surface between sub-steps and produce a violent pop-out rebound.
+        (hk['HP_Body_SetQualityType'] as Function)?.(hpBallBody, 5);
       }
     }
 
