@@ -9,10 +9,11 @@ import { BabylonEngine } from './core/Engine';
 async function main(): Promise<void> {
   try {
     // Get canvas
-    const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
-    if (!canvas) {
-      throw new Error('Canvas element not found');
+    const canvasElement = document.getElementById('renderCanvas');
+    if (!canvasElement || !(canvasElement instanceof HTMLCanvasElement)) {
+      throw new Error('Canvas element not found or is not a canvas');
     }
+    const canvas = canvasElement;
 
     // Initialize BabylonJS Engine
     const engine = BabylonEngine.init(canvas);
