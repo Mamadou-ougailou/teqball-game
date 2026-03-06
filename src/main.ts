@@ -265,12 +265,9 @@ async function main(): Promise<void> {
       
 
 
-      // Add physics to table (static).
-      // The table is one solid closed mesh (surface + net ridge integrated).
-      // PhysicsShapeType.MESH traces every triangle exactly — preserving the
-      // curved playing surface AND the raised net ridge in the centre.
-      // CONVEX_HULL was wrong here: it wraps the outer shell and throws away
-      // the concave curved shape and any internal ridges (the net).
+      // Add physics to table using the exact mesh geometry.
+      // The table is one solid closed mesh — MESH shape traces every triangle,
+      // preserving the curved surface and the net ridge precisely.
       tableData.meshes.forEach((mesh) => {
         const totalVertices = mesh.getTotalVertices();
         if (totalVertices > 0) {
@@ -292,46 +289,6 @@ async function main(): Promise<void> {
           }
         }
       });
-
-      // ── Safety net box collider (CCD backup) ───────────────────────────────
-      // At high ball speeds, even MESH can be tunnelled in a single frame.
-      // An explicit solid box at the net ridge guarantees a collision response
-      // regardless of speed.
-      tableData.meshes[0].computeWorldMatrix(true);
-      const tableWorldBounds = tableData.meshes[0].getHierarchyBoundingVectors(true);
-      const tMin = tableWorldBounds.min;
-      const tMax = tableWorldBounds.max;
-
-      const extentX = tMax.x - tMin.x;
-      const extentZ = tMax.z - tMin.z;
-      // After the PI/2 Y-rotation the table's long axis is along X (≈3 m)
-      const isLongAxisX = extentX > extentZ;
-
-      const netHeight = 0.20 * SCALE;  // height of the net ridge
-      const netThick  = 0.06 * SCALE;  // thickness along the long axis
-
-      const netCollider = MeshBuilder.CreateBox('netCollider', {
-        width:  isLongAxisX ? netThick : extentX,
-        height: netHeight,
-        depth:  isLongAxisX ? extentZ  : netThick,
-      }, gameScene);
-
-      netCollider.position = new Vector3(
-        (tMin.x + tMax.x) / 2,
-        tMax.y + netHeight / 2,
-        (tMin.z + tMax.z) / 2,
-      );
-
-      // Set to true temporarily to verify placement in-game
-      netCollider.isVisible = false;
-
-      new PhysicsAggregate(
-        netCollider,
-        PhysicsShapeType.BOX,
-        { mass: 0, restitution: 0.6, friction: 0.1 },
-        gameScene
-      );
-      // ───────────────────────────────────────────────────────────────────────
     }
 
     // Create procedural ball (sphere primitive)
