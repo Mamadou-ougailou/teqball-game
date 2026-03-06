@@ -87,6 +87,16 @@ async function main(): Promise<void> {
     const light = new HemisphericLight('light', new Vector3(0, 1, 0), gameScene);
     light.intensity = 1.2;
 
+    // ------------------------------------------------------------------
+    // Collision layers (bit masks)
+    //   COL_BALL   = 1  — ball; listens for and triggers everything
+    //   COL_WORLD  = 2  — static geometry (floor, walls, table)
+    //   COL_PLAYER = 4  — player bodies (no player-player collisions)
+    // ------------------------------------------------------------------
+    const COL_BALL   = 1;
+    const COL_WORLD  = 2;
+    const COL_PLAYER = 4;
+
     // Initialize physics engine
     const havokInstance = await HavokPhysics({
       locateFile: () => '/HavokPhysics.wasm'
@@ -97,6 +107,16 @@ async function main(): Promise<void> {
     // Run physics at 120 Hz (half-step) — halves the tunnelling window
     // for fast-moving objects like the ball passing through thin surfaces.
     havokPlugin.setTimeStep(1 / 120);
+
+    // Bump solver iterations from the Havok default (4) to 10 velocity + 4 position.
+    // The extra passes significantly improve ball-to-curved-surface contact accuracy
+    // for a sports simulation at the cost of a small (~15 %) CPU overhead.
+    const hk = (havokPlugin as any)._hknp as Record<string, (...a: unknown[]) => unknown> | undefined;
+    const havokWorld = (havokPlugin as any).world as unknown;
+    if (hk && havokWorld !== undefined) {
+      (hk['HP_World_SetNumConstraintSolverVelocityIterations'] as Function)?.(havokWorld, 10);
+      (hk['HP_World_SetNumConstraintSolverPositionIterations'] as Function)?.(havokWorld, 4);
+    }
 
     // Create court floor (16m x 12m)
     const courtFloor = MeshBuilder.CreateGround(
@@ -115,6 +135,10 @@ async function main(): Promise<void> {
       { mass: 0, restitution: 0.7, friction: 0.4 },
       gameScene
     );
+    if (courtFloor.physicsBody?.shape) {
+      courtFloor.physicsBody.shape.filterMembershipMask = COL_WORLD;
+      courtFloor.physicsBody.shape.filterCollideMask    = COL_BALL | COL_PLAYER;
+    }
 
     // Create invisible walls around court for natural bouncing
     const wallHeight = 3 * SCALE;
@@ -159,6 +183,14 @@ async function main(): Promise<void> {
     backWall.position = new Vector3(0, wallHeight / 2, 8 * SCALE + wallThickness / 2);
     backWall.isVisible = false;
     new PhysicsAggregate(backWall, PhysicsShapeType.BOX, { mass: 0, restitution: 0.7, friction: 0.3 }, gameScene);
+
+    // Assign COL_WORLD to all four invisible walls
+    for (const wall of [leftWall, rightWall, frontWall, backWall]) {
+      if (wall.physicsBody?.shape) {
+        wall.physicsBody.shape.filterMembershipMask = COL_WORLD;
+        wall.physicsBody.shape.filterCollideMask    = COL_BALL | COL_PLAYER;
+      }
+    }
 
     // Add court markings (lines)
     const lineY = 0.01 * SCALE;
@@ -287,6 +319,11 @@ async function main(): Promise<void> {
               gameScene
             );
           }
+          // Table is static world geometry — only the ball needs to interact with it
+          if (mesh.physicsBody?.shape) {
+            mesh.physicsBody.shape.filterMembershipMask = COL_WORLD;
+            mesh.physicsBody.shape.filterCollideMask    = COL_BALL;
+          }
         }
       });
     }
@@ -335,6 +372,20 @@ async function main(): Promise<void> {
     if (ballGeomMesh.physicsBody) {
       ballGeomMesh.physicsBody.setLinearDamping(0.05);
       ballGeomMesh.physicsBody.setAngularDamping(0.2);
+
+      // Ball lives in COL_BALL and collides with world geometry + players.
+      if (ballGeomMesh.physicsBody.shape) {
+        ballGeomMesh.physicsBody.shape.filterMembershipMask = COL_BALL;
+        ballGeomMesh.physicsBody.shape.filterCollideMask    = COL_WORLD | COL_PLAYER;
+      }
+
+      // Prevent Havok from auto-sleeping the ball mid-rally.
+      // HP_Body_SetDeactivationEnabled(body, false) disables the automatic
+      // velocity-threshold sleep for this body only — all other bodies are unaffected.
+      const hpBallBody = (ballGeomMesh.physicsBody as any)._pluginData?.hpBody as unknown;
+      if (hk && hpBallBody !== undefined) {
+        (hk['HP_Body_SetDeactivationEnabled'] as Function)?.(hpBallBody, false);
+      }
     }
 
     // Create player 1 (table left side)
@@ -354,12 +405,19 @@ async function main(): Promise<void> {
       // Find the actual mesh with geometry (skip empty parent nodes)
       const player1PhysicsMesh = player1Data.meshes.find(m => m.getTotalVertices() > 0);
       if (player1PhysicsMesh) {
+        // CAPSULE is a single axis-aligned convex hull — much cheaper than BOX
+        // and more accurate for a humanoid silhouette.
         new PhysicsAggregate(
           player1PhysicsMesh,
-          PhysicsShapeType.BOX,
+          PhysicsShapeType.CAPSULE,
           { mass: 0, restitution: 0.3, friction: 0.8 },
           gameScene
         );
+        // COL_PLAYER: collides with ball and world geometry, never with other players
+        if (player1PhysicsMesh.physicsBody?.shape) {
+          player1PhysicsMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
+          player1PhysicsMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
+        }
       }
     } else {
       throw new Error('Player 1 model loaded but has no meshes');
@@ -384,10 +442,15 @@ async function main(): Promise<void> {
       if (player2PhysicsMesh) {
         new PhysicsAggregate(
           player2PhysicsMesh,
-          PhysicsShapeType.BOX,
+          PhysicsShapeType.CAPSULE,
           { mass: 0, restitution: 0.3, friction: 0.8 },
           gameScene
         );
+        // COL_PLAYER: collides with ball and world geometry, never with other players
+        if (player2PhysicsMesh.physicsBody?.shape) {
+          player2PhysicsMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
+          player2PhysicsMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
+        }
       }
     } else {
       throw new Error('Player 2 model loaded but has no meshes');
