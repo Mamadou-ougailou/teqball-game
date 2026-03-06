@@ -297,41 +297,44 @@ async function main(): Promise<void> {
       throw new Error('ball01 model loaded but has no meshes');
     }
 
-    // Index 0 is always the root/parent node — move and physics go here.
     const ballRootMesh = ballData.meshes[0];
 
-    // Measure the unscaled hierarchy size in model space.
+    // Measure raw hierarchy size at scale (1,1,1).
     ballRootMesh.scaling = new Vector3(1, 1, 1);
     ballRootMesh.computeWorldMatrix(true);
     const ballHierarchyBounds = ballRootMesh.getHierarchyBoundingVectors(true);
     const rawSize = ballHierarchyBounds.max.subtract(ballHierarchyBounds.min);
     const rawDiameter = Math.max(rawSize.x, rawSize.y, rawSize.z);
 
-    // Scale uniformly so the ball is exactly 0.22 m in diameter.
     const desiredDiameter = 0.22 * SCALE;
     const ballScale = rawDiameter > 0 ? desiredDiameter / rawDiameter : 1;
-    ballRootMesh.scaling = new Vector3(ballScale, ballScale, ballScale);
-
     const ballRadius = desiredDiameter / 2;
 
-    // Place the ROOT mesh in world space — child positions are relative to it,
-    // so setting position here moves the whole model including physics body.
-    ballRootMesh.position = new Vector3(0, 1.8 * SCALE, 0);
+    // Find the child mesh that has actual geometry.
+    const ballGeomMesh = ballData.meshes.find(m => m.getTotalVertices() > 0) ?? ballRootMesh;
 
-    ball = new Ball(ballRootMesh);
+    // Detach from parent so it lives in world space — this lets PhysicsAggregate
+    // correctly measure the bounding sphere from real geometry.
+    ballGeomMesh.setParent(null);
+    ballGeomMesh.scaling  = new Vector3(ballScale, ballScale, ballScale);
+    ballGeomMesh.position = new Vector3(0, 1.8 * SCALE, 0);
 
-    // Physics on the root mesh so world position matches exactly.
+    // Hide the now-empty root node.
+    ballRootMesh.setEnabled(false);
+
+    ball = new Ball(ballGeomMesh);
+
+    // PhysicsAggregate on the geometry mesh — bounding sphere is now correct.
     new PhysicsAggregate(
-      ballRootMesh,
+      ballGeomMesh,
       PhysicsShapeType.SPHERE,
       { mass: 0.057, restitution: 0.85, friction: 0.3 },
       gameScene
     );
 
-    // Minimal damping to preserve bounciness.
-    if (ballRootMesh.physicsBody) {
-      ballRootMesh.physicsBody.setLinearDamping(0.05);
-      ballRootMesh.physicsBody.setAngularDamping(0.2);
+    if (ballGeomMesh.physicsBody) {
+      ballGeomMesh.physicsBody.setLinearDamping(0.05);
+      ballGeomMesh.physicsBody.setAngularDamping(0.2);
     }
 
     // Create player 1 (table left side)
