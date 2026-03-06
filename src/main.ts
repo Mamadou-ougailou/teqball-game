@@ -291,40 +291,41 @@ async function main(): Promise<void> {
       });
     }
 
-    // Create procedural ball (sphere primitive)
-    // Slightly bigger for easier gameplay control
-    const ballDiameter = 0.22 * SCALE;
-    const ballMesh = MeshBuilder.CreateSphere('ball', {
-      diameter: ballDiameter,
-      segments: 32
-    }, gameScene);
-    
-    // Position clearly above the table so it's visible
-    const ballRadius = ballDiameter / 2;
-    ballMesh.position = new Vector3(0, 1.8 * SCALE, 0);
-    
-    // Create orange material for visibility
-    const ballMaterial = new StandardMaterial('ballMaterial', gameScene);
-    ballMaterial.diffuseColor = new Color3(1, 0.5, 0); // Orange
-    ballMaterial.specularColor = new Color3(0.5, 0.5, 0.5);
-    ballMaterial.emissiveColor = new Color3(0.3, 0.15, 0); // Add emissive to ensure visibility
-    ballMesh.material = ballMaterial;
-    ballMesh.isVisible = true;
+    // Load ball from ball01.glb
+    const ballData = await assetManager.loadModel('ball01');
+    if (ballData.meshes.length === 0) {
+      throw new Error('ball01 model loaded but has no meshes');
+    }
 
-    ball = new Ball(ballMesh);
+    // Find the mesh with actual geometry (skip empty root nodes)
+    const ballVisualMesh = ballData.meshes.find(m => m.getTotalVertices() > 0) ?? ballData.meshes[0];
 
-    // Add physics to ball (dynamic with collisions)
-    const ballAggregate = new PhysicsAggregate(
-      ballMesh,
+    // Scale the ball to the desired gameplay diameter (0.22 m)
+    const desiredDiameter = 0.22 * SCALE;
+    ballVisualMesh.computeWorldMatrix(true);
+    const ballBounds = ballVisualMesh.getBoundingInfo().boundingBox;
+    const ballSize = ballBounds.maximumWorld.subtract(ballBounds.minimumWorld);
+    const currentDiameter = Math.max(ballSize.x, ballSize.y, ballSize.z);
+    const ballScale = desiredDiameter / currentDiameter;
+    ballData.meshes.forEach(m => { m.scaling = new Vector3(ballScale, ballScale, ballScale); });
+
+    const ballRadius = desiredDiameter / 2;
+    ballVisualMesh.position = new Vector3(0, 1.8 * SCALE, 0);
+
+    ball = new Ball(ballVisualMesh);
+
+    // Add physics — SPHERE shape fitted to the desired radius
+    new PhysicsAggregate(
+      ballVisualMesh,
       PhysicsShapeType.SPHERE,
       { mass: 0.057, restitution: 0.85, friction: 0.3 },
       gameScene
     );
-    
+
     // Add minimal damping to keep bounciness
-    if (ballMesh.physicsBody) {
-      ballMesh.physicsBody.setLinearDamping(0.05);
-      ballMesh.physicsBody.setAngularDamping(0.2);
+    if (ballVisualMesh.physicsBody) {
+      ballVisualMesh.physicsBody.setLinearDamping(0.05);
+      ballVisualMesh.physicsBody.setAngularDamping(0.2);
     }
 
     // Create player 1 (table left side)
