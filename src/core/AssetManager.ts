@@ -6,6 +6,11 @@ import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { IEntity } from '@core/interfaces';
 import '@babylonjs/loaders/glTF';
+// Required side-effect imports so that Scene.beginDirectAnimation and the
+// animation scene component are registered before instantiateModelsToScene
+// tries to retarget and start animation groups.
+import '@babylonjs/core/Animations/animatable';
+import '@babylonjs/core/Rendering/boundingBoxRenderer';
 
 export interface ModelData {
   meshes: AbstractMesh[];
@@ -76,15 +81,29 @@ export class AssetManager implements IEntity {
       return this._containers.get(file)!;
     }
 
+    // Try /models/ first (Vite serves public/ at root), then /assets/models/
+    // as a legacy fallback.  Both errors are logged so the real cause is visible.
     let container: AssetContainer;
+    let firstError: unknown;
     try {
       container = await SceneLoader.LoadAssetContainerAsync('/models/', file, this._scene);
-    } catch {
-      container = await SceneLoader.LoadAssetContainerAsync('/assets/models/', file, this._scene);
+    } catch (err) {
+      firstError = err;
+      console.warn(`[AssetManager] /models/${file} failed:`, err);
+      try {
+        container = await SceneLoader.LoadAssetContainerAsync('/assets/models/', file, this._scene);
+      } catch (err2) {
+        // Both paths failed — surface the original error (more informative)
+        throw new Error(
+          `[AssetManager] Failed to load "${file}".\n` +
+          `/models/ error: ${String(firstError)}\n` +
+          `/assets/models/ error: ${String(err2)}`
+        );
+      }
     }
 
-    this._containers.set(file, container);
-    return container;
+    this._containers.set(file, container!);
+    return this._containers.get(file)!;
   }
 
   update(_deltaTime: number): void {}
