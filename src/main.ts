@@ -297,19 +297,26 @@ async function main(): Promise<void> {
       throw new Error('ball01 model loaded but has no meshes');
     }
 
-    // Find the mesh with actual geometry (skip empty root nodes)
-    const ballVisualMesh = ballData.meshes.find(m => m.getTotalVertices() > 0) ?? ballData.meshes[0];
+    // The root mesh (index 0) is the parent that controls overall scale.
+    const ballRootMesh = ballData.meshes[0];
 
-    // Scale the ball to the desired gameplay diameter (0.22 m)
+    // Measure the unscaled size using the full hierarchy bounding vectors.
+    // Reset scaling to 1 first so the measurement is in model-space units.
+    ballRootMesh.scaling = new Vector3(1, 1, 1);
+    ballRootMesh.computeWorldMatrix(true);
+    const ballHierarchyBounds = ballRootMesh.getHierarchyBoundingVectors(true);
+    const rawSize = ballHierarchyBounds.max.subtract(ballHierarchyBounds.min);
+    const rawDiameter = Math.max(rawSize.x, rawSize.y, rawSize.z);
+
+    // Scale uniformly so the ball is exactly 0.22 m in diameter
     const desiredDiameter = 0.22 * SCALE;
-    ballVisualMesh.computeWorldMatrix(true);
-    const ballBounds = ballVisualMesh.getBoundingInfo().boundingBox;
-    const ballSize = ballBounds.maximumWorld.subtract(ballBounds.minimumWorld);
-    const currentDiameter = Math.max(ballSize.x, ballSize.y, ballSize.z);
-    const ballScale = desiredDiameter / currentDiameter;
-    ballData.meshes.forEach(m => { m.scaling = new Vector3(ballScale, ballScale, ballScale); });
+    const ballScale = rawDiameter > 0 ? desiredDiameter / rawDiameter : 1;
+    ballRootMesh.scaling = new Vector3(ballScale, ballScale, ballScale);
 
     const ballRadius = desiredDiameter / 2;
+
+    // Use the first child mesh with geometry as the physics anchor
+    const ballVisualMesh = ballData.meshes.find(m => m.getTotalVertices() > 0) ?? ballRootMesh;
     ballVisualMesh.position = new Vector3(0, 1.8 * SCALE, 0);
 
     ball = new Ball(ballVisualMesh);
