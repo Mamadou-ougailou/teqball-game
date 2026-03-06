@@ -2,12 +2,14 @@ import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
+import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { IEntity } from '@core/interfaces';
 import '@babylonjs/loaders/glTF';
 
 export interface ModelData {
   meshes: AbstractMesh[];
   skeletons: Skeleton[];
+  animationGroups: AnimationGroup[];
 }
 
 /**
@@ -20,10 +22,12 @@ export class AssetManager implements IEntity {
 
   // Map model name → path under /models/
   private static readonly _paths: Record<string, string> = {
-    table:    'table.glb',
-    player01: 'player01.glb',
-    player02: 'player02.glb',
-    ball01:   'ball01.glb',
+    table:        'table.glb',
+    player01:     'player01.glb',
+    player02:     'player02.glb',
+    ball01:       'ball01.glb',
+    character:    'character.glb',
+    character_p2: 'character.glb',  // second independent load for player 2
   };
 
   constructor(scene: Scene) {
@@ -57,8 +61,9 @@ export class AssetManager implements IEntity {
     }
 
     const data: ModelData = {
-      meshes:    result.meshes as AbstractMesh[],
-      skeletons: result.skeletons,
+      meshes:          result.meshes as AbstractMesh[],
+      skeletons:       result.skeletons,
+      animationGroups: result.animationGroups,
     };
     this._cache.set(name, data);
     return data;

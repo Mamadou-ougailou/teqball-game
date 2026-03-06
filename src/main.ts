@@ -406,73 +406,46 @@ async function main(): Promise<void> {
       }
     }
 
-    // Create player 1 (table left side)
-    const player1Data = await assetManager.loadModel('player01');
-    if (player1Data.meshes.length > 0) {
-      const stats: CharacterStats = {
-        speed: 8,
-        jump: 1.2,
-        power: 100,
-        spin: 80,
-      };
-      player1 = new Character(0, player1Data.meshes[0], player1Data.skeletons[0] || null, stats);
-      player1.mesh.position = new Vector3(1 * SCALE, 0.76 * SCALE, -3.5 * SCALE);
-      player1.mesh.rotation = new Vector3(0, Math.PI, 0);
+    // Create player 1  — animated character, neg-Z side of the table
+    const p1Stats: CharacterStats = { speed: 8, jump: 1.2, power: 100, spin: 80 };
+    const charData1 = await assetManager.loadModel('character');
+    if (charData1.meshes.length === 0) throw new Error('character model has no meshes');
 
-      // Add physics to player1 (static obstacle, ball can collide)
-      // Find the actual mesh with geometry (skip empty parent nodes)
-      const player1PhysicsMesh = player1Data.meshes.find(m => m.getTotalVertices() > 0);
-      if (player1PhysicsMesh) {
-        // CAPSULE is a single axis-aligned convex hull — much cheaper than BOX
-        // and more accurate for a humanoid silhouette.
-        new PhysicsAggregate(
-          player1PhysicsMesh,
-          PhysicsShapeType.CAPSULE,
-          { mass: 0, restitution: 0.3, friction: 0.8 },
-          gameScene
-        );
-        // COL_PLAYER: collides with ball and world geometry, never with other players
-        if (player1PhysicsMesh.physicsBody?.shape) {
-          player1PhysicsMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
-          player1PhysicsMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
-        }
+    // Scale to ~1.8 m tall
+    const charRoot1 = charData1.meshes[0];
+    charRoot1.scaling = new Vector3(1, 1, 1);
+    charRoot1.computeWorldMatrix(true);
+    const charBounds1 = charRoot1.getHierarchyBoundingVectors(true);
+    const charHeight1 = charBounds1.max.y - charBounds1.min.y;
+    const charScale1  = charHeight1 > 0 ? 1.8 / charHeight1 : 1;
+    charData1.meshes.forEach(m => { m.scaling = new Vector3(charScale1, charScale1, charScale1); });
+
+    player1 = new Character(0, charRoot1, charData1.skeletons[0] ?? null, p1Stats, charData1.animationGroups);
+    charRoot1.position = new Vector3(0, 0, -3.0 * SCALE);
+    charRoot1.rotation = new Vector3(0, 0, 0);  // faces +Z (toward table)
+
+    // Capsule collider — pick first mesh actually containing geometry
+    const p1PhysMesh = charData1.meshes.find(m => m.getTotalVertices() > 0);
+    if (p1PhysMesh) {
+      new PhysicsAggregate(p1PhysMesh, PhysicsShapeType.CAPSULE,
+        { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
+      if (p1PhysMesh.physicsBody?.shape) {
+        p1PhysMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
+        p1PhysMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
       }
-    } else {
-      throw new Error('Player 1 model loaded but has no meshes');
     }
 
-    // Create player 2 (opposite side)
-    const player2Data = await assetManager.loadModel('player02');
-    if (player2Data.meshes.length > 0) {
-      const stats: CharacterStats = {
-        speed: 8,
-        jump: 1.2,
-        power: 100,
-        spin: 80,
-      };
-      player2 = new Character(1, player2Data.meshes[0], player2Data.skeletons[0] || null, stats);
-      player2.mesh.position = new Vector3(-0.5 * SCALE, 1 * SCALE, 3.5 * SCALE);
-      player2.mesh.rotation = new Vector3(0, 0, 0);
+    // Create player 2  — same model, independent scene load, pos-Z side
+    const p2Stats: CharacterStats = { speed: 8, jump: 1.2, power: 100, spin: 80 };
+    const charData2 = await assetManager.loadModel('character_p2');
+    if (charData2.meshes.length === 0) throw new Error('character_p2 model has no meshes');
 
-      // Add physics to player2 (static obstacle, ball can collide)
-      // Find the actual mesh with geometry (skip empty parent nodes)
-      const player2PhysicsMesh = player2Data.meshes.find(m => m.getTotalVertices() > 0);
-      if (player2PhysicsMesh) {
-        new PhysicsAggregate(
-          player2PhysicsMesh,
-          PhysicsShapeType.CAPSULE,
-          { mass: 0, restitution: 0.3, friction: 0.8 },
-          gameScene
-        );
-        // COL_PLAYER: collides with ball and world geometry, never with other players
-        if (player2PhysicsMesh.physicsBody?.shape) {
-          player2PhysicsMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
-          player2PhysicsMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
-        }
-      }
-    } else {
-      throw new Error('Player 2 model loaded but has no meshes');
-    }
+    const charRoot2 = charData2.meshes[0];
+    charData2.meshes.forEach(m => { m.scaling = new Vector3(charScale1, charScale1, charScale1); });
+
+    player2 = new Character(1, charRoot2, charData2.skeletons[0] ?? null, p2Stats, charData2.animationGroups);
+    charRoot2.position = new Vector3(0, 0, 3.0 * SCALE);
+    charRoot2.rotation = new Vector3(0, Math.PI, 0); // faces -Z (toward table)
 
 
 
@@ -531,6 +504,7 @@ async function main(): Promise<void> {
 
       // Bounce when space pressed - works on any surface (ground, table, etc.)
       const now = Date.now();
+      let kickTriggered = false;
       if (pressedKeys.has('space') && now - lastSpacePress > spacePressCooldown) {
         // Check if ball is resting/landed on any surface (not in mid-air)
         // This works for ground, table, or any other surface
@@ -547,6 +521,7 @@ async function main(): Promise<void> {
           currentVelocity = physicsBody.getLinearVelocity();
           
           lastSpacePress = now;
+          kickTriggered = true;
         }
       }
 
@@ -587,6 +562,13 @@ async function main(): Promise<void> {
         physicsBody.setLinearVelocity(
           new Vector3(newVel.x * scale, newVel.y, newVel.z * scale)
         );
+      }
+
+      // Drive player 1 animation from the same input that moves the ball.
+      // This mirrors the "player controls the ball" mechanic — when the ball
+      // goes forward, player1 jogs forward; space = kick.
+      if (player1) {
+        player1.setMovement(moveX, moveZ, kickTriggered, deltaTime);
       }
     });
 
