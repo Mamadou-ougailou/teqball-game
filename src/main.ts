@@ -297,42 +297,41 @@ async function main(): Promise<void> {
       throw new Error('ball01 model loaded but has no meshes');
     }
 
-    // The root mesh (index 0) is the parent that controls overall scale.
+    // Index 0 is always the root/parent node — move and physics go here.
     const ballRootMesh = ballData.meshes[0];
 
-    // Measure the unscaled size using the full hierarchy bounding vectors.
-    // Reset scaling to 1 first so the measurement is in model-space units.
+    // Measure the unscaled hierarchy size in model space.
     ballRootMesh.scaling = new Vector3(1, 1, 1);
     ballRootMesh.computeWorldMatrix(true);
     const ballHierarchyBounds = ballRootMesh.getHierarchyBoundingVectors(true);
     const rawSize = ballHierarchyBounds.max.subtract(ballHierarchyBounds.min);
     const rawDiameter = Math.max(rawSize.x, rawSize.y, rawSize.z);
 
-    // Scale uniformly so the ball is exactly 0.22 m in diameter
+    // Scale uniformly so the ball is exactly 0.22 m in diameter.
     const desiredDiameter = 0.22 * SCALE;
     const ballScale = rawDiameter > 0 ? desiredDiameter / rawDiameter : 1;
     ballRootMesh.scaling = new Vector3(ballScale, ballScale, ballScale);
 
     const ballRadius = desiredDiameter / 2;
 
-    // Use the first child mesh with geometry as the physics anchor
-    const ballVisualMesh = ballData.meshes.find(m => m.getTotalVertices() > 0) ?? ballRootMesh;
-    ballVisualMesh.position = new Vector3(0, 1.8 * SCALE, 0);
+    // Place the ROOT mesh in world space — child positions are relative to it,
+    // so setting position here moves the whole model including physics body.
+    ballRootMesh.position = new Vector3(0, 1.8 * SCALE, 0);
 
-    ball = new Ball(ballVisualMesh);
+    ball = new Ball(ballRootMesh);
 
-    // Add physics — SPHERE shape fitted to the desired radius
+    // Physics on the root mesh so world position matches exactly.
     new PhysicsAggregate(
-      ballVisualMesh,
+      ballRootMesh,
       PhysicsShapeType.SPHERE,
       { mass: 0.057, restitution: 0.85, friction: 0.3 },
       gameScene
     );
 
-    // Add minimal damping to keep bounciness
-    if (ballVisualMesh.physicsBody) {
-      ballVisualMesh.physicsBody.setLinearDamping(0.05);
-      ballVisualMesh.physicsBody.setAngularDamping(0.2);
+    // Minimal damping to preserve bounciness.
+    if (ballRootMesh.physicsBody) {
+      ballRootMesh.physicsBody.setLinearDamping(0.05);
+      ballRootMesh.physicsBody.setAngularDamping(0.2);
     }
 
     // Create player 1 (table left side)
