@@ -34,9 +34,19 @@ export class AssetManager implements IEntity {
 
   /** Pre-load all known assets so they are ready when needed. */
   async loadAllAssets(): Promise<void> {
-    await Promise.all(
-      Object.keys(AssetManager._paths).map((name) => this.loadModel(name))
-    );
+    // Load each unique file path exactly once in parallel.
+    // Aliases that share the same file (e.g. character_p2 → character.glb)
+    // are intentionally skipped here: Babylon cannot import the same file
+    // twice concurrently without errors.  Those aliases load lazily the first
+    // time loadModel() is called for them from main.ts.
+    const seenPaths = new Set<string>();
+    const uniqueKeys = Object.keys(AssetManager._paths).filter(key => {
+      const path = AssetManager._paths[key];
+      if (seenPaths.has(path)) return false;
+      seenPaths.add(path);
+      return true;
+    });
+    await Promise.all(uniqueKeys.map(name => this.loadModel(name)));
   }
 
   /** Load (or return cached) a named model. Returns meshes + skeletons. */
