@@ -347,7 +347,9 @@ async function main(): Promise<void> {
       });
     }
 
-    // Load ball from ball01.glb
+    // Load ball visual from ball01.glb, but simulate physics on a clean
+    // procedural sphere. This avoids GLB hierarchy / transform issues that can
+    // make Havok compute a bad sphere radius and launch the ball upward.
     const ballData = await assetManager.loadModel('ball01');
     if (ballData.meshes.length === 0) {
       throw new Error('ball01 model loaded but has no meshes');
@@ -366,49 +368,43 @@ async function main(): Promise<void> {
     const ballScale = rawDiameter > 0 ? desiredDiameter / rawDiameter : 1;
     const ballRadius = desiredDiameter / 2;
 
-    // Find the child mesh that has actual geometry.
-    const ballGeomMesh = ballData.meshes.find(m => m.getTotalVertices() > 0) ?? ballRootMesh;
+    const ballPhysicsMesh = MeshBuilder.CreateSphere(
+      'ballPhysics',
+      { diameter: desiredDiameter, segments: 24 },
+      gameScene,
+    );
+    ballPhysicsMesh.position = BALL_SPAWN_POSITION.clone();
+    ballPhysicsMesh.visibility = 0;
+    ballPhysicsMesh.isPickable = false;
 
-    // Detach from parent so it lives in world space — this lets PhysicsAggregate
-    // correctly measure the bounding sphere from real geometry.
-    ballGeomMesh.setParent(null);
-    ballGeomMesh.scaling  = new Vector3(ballScale, ballScale, ballScale);
-    // Spawn away from the table center/net. Spawning exactly above the net can
-    // create a bad first contact that ejects the ball upward.
-    ballGeomMesh.position = BALL_SPAWN_POSITION.clone();
+    // Parent the visible GLB ball to the procedural physics sphere so the
+    // visual follows the simulated root exactly.
+    ballRootMesh.setParent(ballPhysicsMesh);
+    ballRootMesh.position = Vector3.Zero();
+    ballRootMesh.rotation = Vector3.Zero();
+    ballRootMesh.scaling = new Vector3(ballScale, ballScale, ballScale);
 
-    // Hide the now-empty root node.
-    ballRootMesh.setEnabled(false);
+    ball = new Ball(ballPhysicsMesh);
 
-    ball = new Ball(ballGeomMesh);
-
-    // PhysicsAggregate on the geometry mesh — bounding sphere is now correct.
-    // Restitution 0.72 matches the table so combined bounce = max(0.72, 0.72) = 0.72.
     new PhysicsAggregate(
-      ballGeomMesh,
+      ballPhysicsMesh,
       PhysicsShapeType.SPHERE,
       { mass: 0.057, restitution: 0.72, friction: 0.3 },
       gameScene
     );
 
-    if (ballGeomMesh.physicsBody) {
-      ballGeomMesh.physicsBody.setLinearDamping(0.05);
-      ballGeomMesh.physicsBody.setAngularDamping(0.2);
+    if (ballPhysicsMesh.physicsBody) {
+      ballPhysicsMesh.physicsBody.setLinearDamping(0.05);
+      ballPhysicsMesh.physicsBody.setAngularDamping(0.2);
 
-      // Ball lives in COL_BALL and collides with world geometry + players.
-      if (ballGeomMesh.physicsBody.shape) {
-        ballGeomMesh.physicsBody.shape.filterMembershipMask = COL_BALL;
-        ballGeomMesh.physicsBody.shape.filterCollideMask    = COL_WORLD | COL_PLAYER;
+      if (ballPhysicsMesh.physicsBody.shape) {
+        ballPhysicsMesh.physicsBody.shape.filterMembershipMask = COL_BALL;
+        ballPhysicsMesh.physicsBody.shape.filterCollideMask    = COL_WORLD | COL_PLAYER;
       }
 
-      const hpBallBody = (ballGeomMesh.physicsBody as any)._pluginData?.hpBody as unknown;
+      const hpBallBody = (ballPhysicsMesh.physicsBody as any)._pluginData?.hpBody as unknown;
       if (hk && hpBallBody !== undefined) {
-        // No auto-sleep mid-rally.
         (hk['HP_Body_SetDeactivationEnabled'] as Function)?.(hpBallBody, false);
-
-        // Quality type BULLET (5) enables continuous collision detection for this
-        // body so a fast-moving ball cannot partially tunnel through the table
-        // surface between sub-steps and produce a violent pop-out rebound.
         (hk['HP_Body_SetQualityType'] as Function)?.(hpBallBody, 5);
       }
     }
