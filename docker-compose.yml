@@ -1,0 +1,32 @@
+services:
+
+  # ── Development ─────────────────────────────────────────────────────────────
+  # Hot-module reload, source files mounted from host.
+  # Usage:  docker compose up dev
+  dev:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules   # isolated from host to avoid arch conflicts
+    ports:
+      - "5173:5173"
+    environment:
+      - NODE_ENV=development
+    command: >
+      sh -c "npm ci --prefer-offline && npm run dev -- --host 0.0.0.0 --no-open"
+
+  # ── Production ──────────────────────────────────────────────────────────────
+  # Builds the project and serves with nginx.
+  # Usage:  docker compose up prod  (or  docker compose --profile prod up)
+  prod:
+    build:
+      context: .
+      target: production
+    ports:
+      - "8080:80"
+    profiles:
+      - prod
+
+volumes:
+  node_modules:

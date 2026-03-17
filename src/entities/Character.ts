@@ -40,6 +40,12 @@ export class Character implements ICharacter {
     this.stats    = stats;
 
     if (animationGroups && animationGroups.length > 0) {
+      // Retarget all shadow-armature animation groups to the visible skeleton.
+      // This is a no-op if there is only one skeleton (i.e. after a proper
+      // single-armature re-export from Blender).
+      if (skeleton && animationGroups.length > 1) {
+        AnimationSystem.retargetToSkeleton(animationGroups, skeleton);
+      }
       this._anim = new AnimationSystem(animationGroups);
       this._anim.play('idle');
     }

@@ -54,7 +54,8 @@ let table: TeqballTable;
 const pressedKeys = new Set<string>();
 const controlKeys = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's', 'space']);
 let lastSpacePress = 0;
-const BALL_SPAWN_POSITION = new Vector3(0, 1.6 * SCALE, -2.5 * SCALE);
+// Spawn ball well above the table surface (table top is ~0.76 m; ball radius 0.11 m)
+const BALL_SPAWN_POSITION = new Vector3(0, 1.5 * SCALE, 0);
 const BALL_MAX_UPWARD_SPEED = 8 * SCALE;
 const BALL_RESET_HEIGHT = 8 * SCALE;
 const BALL_RESET_X_LIMIT = 10 * SCALE;
@@ -439,15 +440,23 @@ async function main(): Promise<void> {
     charRoot1.position = new Vector3(0, 0, -3.0 * SCALE);
     charRoot1.rotation = new Vector3(0, 0, 0);  // faces +Z (toward table)
 
-    // Capsule collider — pick first mesh actually containing geometry
-    const p1PhysMesh = charData1.meshes.find(m => m.getTotalVertices() > 0);
-    if (p1PhysMesh) {
-      new PhysicsAggregate(p1PhysMesh, PhysicsShapeType.CAPSULE,
-        { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
-      if (p1PhysMesh.physicsBody?.shape) {
-        p1PhysMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
-        p1PhysMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
-      }
+    // Capsule collider on a SEPARATE invisible mesh — never attached to the
+    // animated hierarchy so that animation root-motion cannot teleport the body
+    // and create phantom impulses on the ball.
+    const p1Capsule = MeshBuilder.CreateCapsule('p1Capsule',
+      { height: 1.8 * SCALE, radius: 0.3 * SCALE }, gameScene);
+    p1Capsule.isVisible = false;
+    p1Capsule.isPickable = false;
+    p1Capsule.position = new Vector3(
+      charRoot1.position.x,
+      0.9 * SCALE,            // half of 1.8 m height
+      charRoot1.position.z
+    );
+    new PhysicsAggregate(p1Capsule, PhysicsShapeType.CAPSULE,
+      { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
+    if (p1Capsule.physicsBody?.shape) {
+      p1Capsule.physicsBody.shape.filterMembershipMask = COL_PLAYER;
+      p1Capsule.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
     }
 
     // Create player 2  — second independent instantiation of the same container
@@ -462,15 +471,21 @@ async function main(): Promise<void> {
     charRoot2.position = new Vector3(0, 0, 3.0 * SCALE);
     charRoot2.rotation = new Vector3(0, Math.PI, 0); // faces -Z (toward table)
 
-    // Capsule collider for player 2
-    const p2PhysMesh = charData2.meshes.find(m => m.getTotalVertices() > 0);
-    if (p2PhysMesh) {
-      new PhysicsAggregate(p2PhysMesh, PhysicsShapeType.CAPSULE,
-        { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
-      if (p2PhysMesh.physicsBody?.shape) {
-        p2PhysMesh.physicsBody.shape.filterMembershipMask = COL_PLAYER;
-        p2PhysMesh.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
-      }
+    // Capsule collider for player 2 — same approach: separate mesh, not animated
+    const p2Capsule = MeshBuilder.CreateCapsule('p2Capsule',
+      { height: 1.8 * SCALE, radius: 0.3 * SCALE }, gameScene);
+    p2Capsule.isVisible = false;
+    p2Capsule.isPickable = false;
+    p2Capsule.position = new Vector3(
+      charRoot2.position.x,
+      0.9 * SCALE,
+      charRoot2.position.z
+    );
+    new PhysicsAggregate(p2Capsule, PhysicsShapeType.CAPSULE,
+      { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
+    if (p2Capsule.physicsBody?.shape) {
+      p2Capsule.physicsBody.shape.filterMembershipMask = COL_PLAYER;
+      p2Capsule.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
     }
 
 

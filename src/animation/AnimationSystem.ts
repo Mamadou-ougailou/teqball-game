@@ -1,76 +1,131 @@
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
+import { Skeleton } from '@babylonjs/core/Bones/skeleton';
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 
-// -----------------------------------------------------------------------
-// Animation index map — each number references one of the 18 AnimationGroups
-// that Blender baked from the Mixamo FBX imports into character_master.glb.
-//
-// The order in the GLB matches the Blender scene order (Armature suffix).
-// Adjust these numbers based on the console output that lists all clip names
-// at load time (look for '[AnimationSystem] clip[N]: ...' lines).
-// -----------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// Animation index map
+// Animation clip name map
 //
-// IMPORTANT: this GLB was exported from Blender with 18 separate Mixamo
-// armatures (one per FBX clip).  Each animation group only drives the bones
-// of its own armature.  The VISIBLE mesh is skinned to Armature index 0.
-// Therefore only animation group 0 will visually animate the character;
-// the other groups animate shadow armatures that are not bound to any mesh.
+// Keys are logical action names used by Character.ts.
+// Values are substrings of the AnimationGroup names that BabylonJS logs on
+// load (check browser console for "[AnimationSystem] clip[N]: …" lines).
 //
-// Once the Blender file is re-exported with a single merged armature (NLA
-// bake), update the indices below to match the new clip order.
+// These strings are matched case-insensitively against group.name so you
+// don't need to type the exact Blender export name — a unique fragment works.
+//
+// Why not use indices?  The GLB was exported with 18 separate Mixamo armatures
+// so the names are the only stable identifier.  retargetToSkeleton() below
+// re-points every group's targets to skeleton 0 so all clips visually animate.
 // ---------------------------------------------------------------------------
-export const PLAYER_ANIM = {
-  // All currently point to group 0 (the only group that targets the
-  // visible skinned mesh).  Tune these after a proper single-armature export.
-  idle:         0,
-  jogForward:   0,
-  jogBack:      0,
-  strafeLeft:   0,
-  strafeRight:  0,
-  kick2:        0,
-  scissorKick:  0,
-  header:       0,
-  headerBall1:  0,
-  headerBall2:  0,
-  jogBackDiag1: 0,
-  jogBackDiag2: 0,
-  jogFwdDiag1:  0,
-  jogFwdDiag2:  0,
-  kick1:        0,
-  knee1:        0,
-  knee2:        0,
-  extra:        0,
-} as const;
+export const PLAYER_ANIM_NAMES: Record<string, string> = {
+  idle:         'idle',
+  jogForward:   'jog',        // update these fragments once you see the console names
+  jogBack:      'jog back',
+  strafeLeft:   'strafe left',
+  strafeRight:  'strafe right',
+  kick2:        'kick',
+  scissorKick:  'scissor',
+  header:       'header',
+  headerBall1:  'header ball 1',
+  headerBall2:  'header ball 2',
+  jogBackDiag1: 'jog back diag 1',
+  jogBackDiag2: 'jog back diag 2',
+  jogFwdDiag1:  'jog forward diag 1',
+  jogFwdDiag2:  'jog forward diag 2',
+  kick1:        'kick 1',
+  knee1:        'knee 1',
+  knee2:        'knee 2',
+  extra:        'extra',
+};
 
-export type PlayerAnimKey = keyof typeof PLAYER_ANIM;
+// Kept for backwards compatibility — all resolve to -1 (name lookup) now.
+export const PLAYER_ANIM = Object.fromEntries(
+  Object.keys(PLAYER_ANIM_NAMES).map(k => [k, -1])
+) as Record<string, number>;
+
+export type PlayerAnimKey = keyof typeof PLAYER_ANIM_NAMES;
 
 /**
  * AnimationSystem — wraps a flat list of AnimationGroups loaded from a GLB
  * and provides a simple play-by-key API with instant-stop crossfade.
+ *
+ * Call AnimationSystem.retargetToSkeleton(groups, skeleton) BEFORE constructing
+ * this class when the GLB contains multiple armatures (Blender Mixamo export).
+ * This rewires every group's targets so they all drive the visible skeleton.
  */
 export class AnimationSystem {
   private readonly _clips: AnimationGroup[];
   private _active: AnimationGroup | null = null;
   private _activeIndex = -1;
 
+  // ---------------------------------------------------------------------------
+  // Static helper — retarget shadow-armature animation groups to skeleton 0.
+  //
+  // Blender exports 18 Mixamo armatures → 18 GLB skeletons.  The visible mesh
+  // is only skinned to skeleton 0.  Skeletons 1-17 have the same bone names but
+  // with Blender's ".001", ".002" … suffixes on their TransformNodes.
+  //
+  // We strip that suffix and look up the matching TransformNode in skeleton 0,
+  // then replace the target on each TargetedAnimation.  After this call every
+  // group in the array will animate skeleton 0, making all clips visible.
+  // ---------------------------------------------------------------------------
+  static retargetToSkeleton(groups: AnimationGroup[], skeleton: Skeleton): void {
+    // Build name → TransformNode from the primary skeleton
+    const nodeByName = new Map<string, TransformNode>();
+    for (const bone of skeleton.bones) {
+      const node: TransformNode | null = bone.getTransformNode?.() ??
+        (bone as any)._linkedTransformNode ?? null;
+      if (node) {
+        nodeByName.set(node.name, node);
+        // Also index without the Blender uniqueness suffix (.001, .002 …)
+        const base = node.name.replace(/\.\d+$/, '');
+        if (!nodeByName.has(base)) nodeByName.set(base, node);
+      }
+    }
+
+    // Group 0 already targets skeleton 0 — skip it.
+    for (let i = 1; i < groups.length; i++) {
+      let remapped = 0;
+      for (const ta of groups[i].targetedAnimations) {
+        const rawName: string = (ta.target as any).name ?? '';
+        const base = rawName.replace(/\.\d+$/, '');
+        const mapped = nodeByName.get(rawName) ?? nodeByName.get(base);
+        if (mapped) {
+          ta.target = mapped;
+          remapped++;
+        }
+      }
+      console.log(`[AnimationSystem] retarget group[${i}] "${groups[i].name}": ${remapped} targets remapped`);
+    }
+  }
+
   constructor(groups: AnimationGroup[]) {
     this._clips = groups;
-    // Stop every group (Babylon auto-starts the first one)
+    // Stop every group (Babylon auto-starts the first one on load)
     groups.forEach((g, i) => {
       g.stop();
       console.log(`[AnimationSystem] clip[${i}]: "${g.name}"`);
     });
   }
 
+  /** Resolve a key string to a clip index by substring-matching the group name. */
+  private _resolve(keyOrIndex: PlayerAnimKey | number): number {
+    if (typeof keyOrIndex === 'number') return keyOrIndex;
+    const fragment = (PLAYER_ANIM_NAMES[keyOrIndex] ?? keyOrIndex).toLowerCase();
+    const idx = this._clips.findIndex(g => g.name.toLowerCase().includes(fragment));
+    if (idx === -1) {
+      console.warn(`[AnimationSystem] no clip matching "${fragment}" for key "${keyOrIndex}"`);
+    }
+    return idx;
+  }
+
   get activeIndex(): number { return this._activeIndex; }
 
   /**
-   * Play animation by key (see PLAYER_ANIM) or by raw index.
+   * Play animation by logical key, exact group name fragment, or raw index.
    * If the same clip is already playing, does nothing.
    */
   play(keyOrIndex: PlayerAnimKey | number, loop = true, speedRatio = 1.0): void {
-    const index = typeof keyOrIndex === 'number' ? keyOrIndex : PLAYER_ANIM[keyOrIndex];
+    const index = this._resolve(keyOrIndex);
     if (index < 0 || index >= this._clips.length) return;
     if (this._activeIndex === index) return;  // already running
 
@@ -82,7 +137,7 @@ export class AnimationSystem {
 
   /** Play a one-shot animation, then automatically revert to a loop clip. */
   playOnce(keyOrIndex: PlayerAnimKey | number, thenPlay: PlayerAnimKey | number = 'idle'): void {
-    const index = typeof keyOrIndex === 'number' ? keyOrIndex : PLAYER_ANIM[keyOrIndex];
+    const index = this._resolve(keyOrIndex);
     if (index < 0 || index >= this._clips.length) return;
 
     this._active?.stop();
