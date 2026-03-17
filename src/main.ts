@@ -54,6 +54,11 @@ let table: TeqballTable;
 const pressedKeys = new Set<string>();
 const controlKeys = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's', 'space']);
 let lastSpacePress = 0;
+const BALL_SPAWN_POSITION = new Vector3(0, 1.6 * SCALE, -2.5 * SCALE);
+const BALL_MAX_UPWARD_SPEED = 8 * SCALE;
+const BALL_RESET_HEIGHT = 8 * SCALE;
+const BALL_RESET_X_LIMIT = 10 * SCALE;
+const BALL_RESET_Z_LIMIT = 14 * SCALE;
 
 async function main(): Promise<void> {
   try {
@@ -368,7 +373,9 @@ async function main(): Promise<void> {
     // correctly measure the bounding sphere from real geometry.
     ballGeomMesh.setParent(null);
     ballGeomMesh.scaling  = new Vector3(ballScale, ballScale, ballScale);
-    ballGeomMesh.position = new Vector3(0, 1.8 * SCALE, 0);
+    // Spawn away from the table center/net. Spawning exactly above the net can
+    // create a bad first contact that ejects the ball upward.
+    ballGeomMesh.position = BALL_SPAWN_POSITION.clone();
 
     // Hide the now-empty root node.
     ballRootMesh.setEnabled(false);
@@ -405,6 +412,17 @@ async function main(): Promise<void> {
         (hk['HP_Body_SetQualityType'] as Function)?.(hpBallBody, 5);
       }
     }
+
+    const resetBall = (): void => {
+      if (!ball?.mesh || !ball.mesh.physicsBody) {
+        return;
+      }
+
+      ball.mesh.position.copyFrom(BALL_SPAWN_POSITION);
+      ball.mesh.rotation.set(0, 0, 0);
+      ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
+      ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
+    };
 
     // Create player 1  — animated character, neg-Z side of the table
     const p1Stats: CharacterStats = { speed: 8, jump: 1.2, power: 100, spin: 80 };
@@ -497,6 +515,22 @@ async function main(): Promise<void> {
       const physicsBody = ball.mesh.physicsBody;
       const deltaTime = engine.getNativeEngine().getDeltaTime() / 1000;
       let currentVelocity = physicsBody.getLinearVelocity();
+
+      if (
+        ball.mesh.position.y > BALL_RESET_HEIGHT ||
+        Math.abs(ball.mesh.position.x) > BALL_RESET_X_LIMIT ||
+        Math.abs(ball.mesh.position.z) > BALL_RESET_Z_LIMIT
+      ) {
+        resetBall();
+        currentVelocity = physicsBody.getLinearVelocity();
+      }
+
+      if (currentVelocity.y > BALL_MAX_UPWARD_SPEED) {
+        physicsBody.setLinearVelocity(
+          new Vector3(currentVelocity.x, BALL_MAX_UPWARD_SPEED, currentVelocity.z)
+        );
+        currentVelocity = physicsBody.getLinearVelocity();
+      }
       
       let moveX = 0;
       let moveZ = 0;
