@@ -1,0 +1,261 @@
+/* ── CUSTOM CURSOR ── */
+const cursor = document.getElementById('cursor');
+const ring = document.getElementById('cursor-ring');
+let mx = 0, my = 0, rx = 0, ry = 0;
+
+document.addEventListener('mousemove', e => {
+  mx = e.clientX; my = e.clientY;
+  cursor.style.left = mx + 'px';
+  cursor.style.top = my + 'px';
+});
+
+(function animRing() {
+  rx += (mx - rx) * 0.12;
+  ry += (my - ry) * 0.12;
+  ring.style.left = rx + 'px';
+  ring.style.top = ry + 'px';
+  requestAnimationFrame(animRing);
+})();
+
+document.querySelectorAll('button, .video-slot').forEach(el => {
+  el.addEventListener('mouseenter', () => cursor.classList.add('hovered'));
+  el.addEventListener('mouseleave', () => cursor.classList.remove('hovered'));
+});
+
+/* ── CANVAS PLACEHOLDER RENDERER ── */
+function PlaceholderVideo(canvasId, config) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  function resize() {
+    canvas.width = canvas.offsetWidth;
+    canvas.height = canvas.offsetHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  let t = 0;
+  const particles = Array.from({length: config.particleCount || 40}, () => ({
+    x: Math.random(), y: Math.random(),
+    vx: (Math.random() - 0.5) * 0.0006,
+    vy: -Math.random() * 0.0008 - 0.0002,
+    r: Math.random() * 1.5 + 0.4,
+    alpha: Math.random()
+  }));
+
+  function draw() {
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, config.bgTop || '#060608');
+    bg.addColorStop(1, config.bgBot || '#0a0a10');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.strokeStyle = 'rgba(200,168,75,0.04)';
+    ctx.lineWidth = 1;
+    const gSize = 40;
+    for (let x = 0; x < W; x += gSize) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+    for (let y = 0; y < H; y += gSize) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    const ox = W * (0.5 + Math.sin(t * 0.4) * 0.15);
+    const oy = H * (0.5 + Math.cos(t * 0.3) * 0.1);
+    const orb = ctx.createRadialGradient(ox, oy, 0, ox, oy, W * 0.35);
+    orb.addColorStop(0, config.orbColor || 'rgba(200,168,75,0.18)');
+    orb.addColorStop(1, 'transparent');
+    ctx.fillStyle = orb;
+    ctx.fillRect(0, 0, W, H);
+
+    drawTable(ctx, W, H, t);
+
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if (p.y < -0.05) { p.y = 1.05; p.x = Math.random(); }
+      p.alpha = Math.abs(Math.sin(t * 0.5 + p.x * 10));
+      ctx.beginPath();
+      ctx.arc(p.x * W, p.y * H, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(200,168,75,${p.alpha * 0.5})`;
+      ctx.fill();
+    });
+
+    drawBall(ctx, W, H, t, config.ballColor || '#c8a84b');
+
+    const vig = ctx.createRadialGradient(W/2, H/2, H*0.2, W/2, H/2, H*0.85);
+    vig.addColorStop(0, 'transparent');
+    vig.addColorStop(1, 'rgba(0,0,0,0.65)');
+    ctx.fillStyle = vig;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.font = `700 ${W * 0.035}px 'Barlow Condensed', sans-serif`;
+    ctx.fillStyle = 'rgba(200,168,75,0.15)';
+    ctx.fillText(config.label || 'PREVIEW', W * 0.06, H * 0.88);
+
+    t += 0.016;
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+
+function drawTable(ctx, W, H, t) {
+  const cx = W * 0.5, cy = H * 0.55;
+  const tw = W * 0.7, th = H * 0.06;
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  const tg = ctx.createLinearGradient(-tw/2, -th/2, tw/2, th/2);
+  tg.addColorStop(0, 'rgba(30,28,24,0.9)');
+  tg.addColorStop(0.5, 'rgba(50,44,32,0.9)');
+  tg.addColorStop(1, 'rgba(30,28,24,0.9)');
+
+  ctx.beginPath();
+  ctx.moveTo(-tw/2, 0);
+  ctx.bezierCurveTo(-tw/4, -th*2.5, tw/4, -th*2.5, tw/2, 0);
+  ctx.lineTo(tw/2, th*0.5);
+  ctx.bezierCurveTo(tw/4, th*1.5, -tw/4, th*1.5, -tw/2, th*0.5);
+  ctx.closePath();
+  ctx.fillStyle = tg;
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(200,168,75,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-tw/2, 0);
+  ctx.bezierCurveTo(-tw/4, -th*2.5, tw/4, -th*2.5, tw/2, 0);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(200,168,75,0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, -th*2.8);
+  ctx.lineTo(0, th*0.3);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawBall(ctx, W, H, t, color) {
+  const progress = (t * 0.4) % 1;
+  const bx = W * (0.2 + progress * 0.6);
+  const peak = H * 0.25;
+  const ground = H * 0.52;
+  const by = ground - Math.sin(progress * Math.PI) * (ground - peak);
+  const r = 8 + Math.sin(t * 2) * 1;
+
+  const glow = ctx.createRadialGradient(bx, by, 0, bx, by, r * 3);
+  glow.addColorStop(0, color.replace(')', ',0.3)').replace('rgb', 'rgba'));
+  glow.addColorStop(1, 'transparent');
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(bx, by, r * 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  const ball = ctx.createRadialGradient(bx - r*0.3, by - r*0.3, 0, bx, by, r);
+  ball.addColorStop(0, '#fff8e7');
+  ball.addColorStop(0.4, color);
+  ball.addColorStop(1, '#3a2e10');
+  ctx.beginPath();
+  ctx.arc(bx, by, r, 0, Math.PI * 2);
+  ctx.fillStyle = ball;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.ellipse(bx, ground + 6, r * 1.5, r * 0.35, 0, 0, Math.PI*2);
+  ctx.fillStyle = `rgba(0,0,0,${0.4 * (1 - Math.sin(progress*Math.PI) * 0.7)})`;
+  ctx.fill();
+}
+
+/* ── INIT CANVAS PLACEHOLDERS ── */
+PlaceholderVideo('canvas-arena', {
+  label: 'ARÈNES — CLOUD / RAVE / SPACE',
+  bgTop: '#06070a',
+  bgBot: '#0a0810',
+  orbColor: 'rgba(80,120,200,0.12)',
+  ballColor: '#6ab0ff',
+  particleCount: 55
+});
+
+PlaceholderVideo('canvas-char', {
+  label: 'PERSONNAGES & SUPERPOWERS',
+  bgTop: '#090608',
+  bgBot: '#0d090a',
+  orbColor: 'rgba(224,92,42,0.12)',
+  ballColor: '#e05c2a',
+  particleCount: 35
+});
+
+/* ── TRANSITION ── */
+const transitionEl = document.getElementById('transition');
+const gameScreen = document.getElementById('game-screen');
+const loadingScreen = document.getElementById('loading-screen');
+const app = document.getElementById('app');
+const backBtn = document.getElementById('back-btn');
+let gameStarted = false;
+
+function showTransition(label, callback) {
+  document.getElementById('transition-text').textContent = label;
+  transitionEl.classList.add('active');
+  setTimeout(callback, 700);
+}
+
+function hideTransition() {
+  transitionEl.classList.remove('active');
+}
+
+/* ── NAVIGATION ── */
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const action = btn.dataset.action;
+    if (action === 'play') {
+      showTransition('CHARGEMENT', async () => {
+        // Show game screen with loading overlay
+        app.style.display = 'none';
+        gameScreen.classList.add('active');
+        loadingScreen.classList.add('active');
+        backBtn.style.display = 'block';
+        document.body.style.cursor = 'default';
+
+        hideTransition();
+
+        if (!gameStarted) {
+          try {
+            // Dynamically import and start the BabylonJS game
+            const { main } = await import('/src/main.ts');
+            await main();
+            gameStarted = true;
+          } catch (err) {
+            loadingScreen.querySelector('p').textContent = 'Error: ' + (err.message || err);
+            loadingScreen.querySelector('p').style.color = '#ff6b6b';
+            console.error(err);
+            return;
+          }
+        }
+
+        // Hide loading once game is ready
+        loadingScreen.classList.remove('active');
+      });
+    } else {
+      showTransition(btn.textContent.trim().split('\n').pop().trim().toUpperCase(), () => {
+        setTimeout(() => {
+          hideTransition();
+        }, 300);
+      });
+    }
+  });
+});
+
+/* ── BACK TO MENU ── */
+backBtn.addEventListener('click', () => {
+  showTransition('MENU', () => {
+    gameScreen.classList.remove('active');
+    backBtn.style.display = 'none';
+    app.style.display = 'grid';
+    document.body.style.cursor = 'none';
+    setTimeout(hideTransition, 200);
+  });
+});
