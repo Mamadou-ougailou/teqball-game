@@ -63,9 +63,10 @@ SHORT_SPAN  = COURT_HX * 2   # 12 m — North/South bleacher length along X
 BANK_DEPTH  = N_ROWS * ROW_DEPTH
 BANK_HEIGHT = N_ROWS * ROW_RISE
 
-# Parabola coefficient for the curved table top: z(x) = TB_PARA * x² + TB_Z_MID
-# Passes through (±TB_W/2, TB_Z_EDGE) and (0, TB_Z_MID)
-TB_PARA = (TB_Z_EDGE - TB_Z_MID) / (TB_W / 2) ** 2   # ≈ −0.270 m⁻¹
+# Parabola coefficient for the curved table top: z(y) = TB_PARA * y² + TB_Z_MID
+# The arch runs along Y (the 3 m LENGTH): high at centre (net), low at the ends.
+# Passes through (y=0, z=TB_Z_MID) and (y=±TB_LEN/2, z=TB_Z_EDGE).
+TB_PARA = (TB_Z_EDGE - TB_Z_MID) / (TB_LEN / 2) ** 2  # ≈ −0.0867 m⁻²
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  COLLECTIONS
@@ -229,101 +230,120 @@ def build_court():
 
 def build_teqboard():
     """
-    Teqboard dimensions (official):
-      Length  : 3.00 m  (along Y)
-      Width   : 1.70 m  (along X)
-      Height at centre (X=0)       : 0.76 m
-      Height at long edges (X=±0.85) : 0.565 m
-      Surface: parabolic curve along X  →  z(x) = TB_PARA·x² + TB_Z_MID
-      Net (plexiglass): 14 cm tall, spans full width at Y=0
+    Teqboard — official dimensions:
+      Length : 3.00 m along Y   Width : 1.70 m along X
+      z(y) = TB_PARA·y² + TB_Z_MID
+        → z = 0.76 m at y=0 (centre / net)   ← highest point
+        → z = 0.565 m at y=±1.5 m (ends)     ← lowest point
+      The arch runs along the LENGTH (Y).  The cross-section along X is flat.
+      Net (plexiglass): 14 cm tall, spans full width at Y=0.
     """
-    hw = TB_W / 2    # 0.85 m
-    hl = TB_LEN / 2  # 1.50 m
-    NX = 24          # subdivisions across width
-    NY = 36          # subdivisions along length
+    hw = TB_W / 2    # 0.85 m — half-width
+    hl = TB_LEN / 2  # 1.50 m — half-length
+    NX = 16          # subdivisions across width  (flat → fewer needed)
+    NY = 40          # subdivisions along length  (curved → more needed)
 
-    # ── 1. Curved table top (closed shell with thickness TB_TOP_T) ────────────
+    # ── 1. Curved playing surface (closed shell, thickness TB_TOP_T) ──────────
     bm = bmesh.new()
     top_v = []
     bot_v = []
 
     for iy in range(NY + 1):
-        y = -hl + iy * TB_LEN / NY
+        y      = -hl + iy * TB_LEN / NY
+        z_surf = TB_PARA * y ** 2 + TB_Z_MID   # arch along Y — flat across X
         top_row, bot_row = [], []
         for ix in range(NX + 1):
             x = -hw + ix * TB_W / NX
-            z_top = TB_PARA * x**2 + TB_Z_MID
-            z_bot = z_top - TB_TOP_T
-            top_row.append(bm.verts.new((x, y, z_top)))
-            bot_row.append(bm.verts.new((x, y, z_bot)))
+            top_row.append(bm.verts.new((x, y, z_surf)))
+            bot_row.append(bm.verts.new((x, y, z_surf - TB_TOP_T)))
         top_v.append(top_row)
         bot_v.append(bot_row)
 
     bm.verts.ensure_lookup_table()
 
-    # Top face quads
+    # Top surface quads
     for iy in range(NY):
         for ix in range(NX):
-            bm.faces.new([top_v[iy][ix], top_v[iy][ix+1],
+            bm.faces.new([top_v[iy][ix],    top_v[iy][ix + 1],
                           top_v[iy+1][ix+1], top_v[iy+1][ix]])
 
-    # Bottom face quads (winding reversed → outward normal downward)
+    # Bottom surface quads (reversed winding → normals point downward)
     for iy in range(NY):
         for ix in range(NX):
-            bm.faces.new([bot_v[iy][ix], bot_v[iy+1][ix],
+            bm.faces.new([bot_v[iy][ix],    bot_v[iy+1][ix],
                           bot_v[iy+1][ix+1], bot_v[iy][ix+1]])
 
-    # Long-side edge caps (at Y = −hl and Y = +hl, closing the slab along X)
+    # Short end-caps at Y = ±hl (flat rectangles across the width)
     for ix in range(NX):
-        bm.faces.new([top_v[0][ix],   bot_v[0][ix],
-                      bot_v[0][ix+1], top_v[0][ix+1]])
+        bm.faces.new([top_v[0][ix],    bot_v[0][ix],
+                      bot_v[0][ix+1],  top_v[0][ix+1]])
         bm.faces.new([top_v[NY][ix+1], bot_v[NY][ix+1],
                       bot_v[NY][ix],   top_v[NY][ix]])
 
-    # Short-side edge caps (at X = −hw and X = +hw, closing the slab along Y)
+    # Long side-caps at X = ±hw (curved strips that follow the arch)
     for iy in range(NY):
-        bm.faces.new([top_v[iy][0],    top_v[iy+1][0],
-                      bot_v[iy+1][0],  bot_v[iy][0]])
-        bm.faces.new([top_v[iy][NX],   bot_v[iy][NX],
+        bm.faces.new([top_v[iy][0],   top_v[iy+1][0],
+                      bot_v[iy+1][0], bot_v[iy][0]])
+        bm.faces.new([top_v[iy][NX],  bot_v[iy][NX],
                       bot_v[iy+1][NX], top_v[iy+1][NX]])
 
     make_mesh_obj('Teqboard_Top', bm, col_table, mat=M_TB_TOP)
 
-    # ── 2. Side skirt / frame (thin box under each long edge) ────────────────
-    # Gives the table a solid visual base along the long sides
+    # ── 2. Orange edge trim — follows the arch along both long sides ──────────
+    # Approximated with NF short box segments that step along the curve.
+    NF        = 14
+    TRIM_T    = 0.045   # trim thickness (outward from surface edge)
+    TRIM_H    = 0.06    # trim height (downward from surface underside)
     for sx in (+1, -1):
-        edge_z_top = TB_PARA * (sx * hw)**2 + TB_Z_MID - TB_TOP_T
-        skirt_h    = edge_z_top          # from floor to underside of edge
-        make_box(f'Teqboard_Skirt_{"E" if sx>0 else "W"}',
-                 (sx * hw * 0.96, 0.0, skirt_h / 2),
-                 0.04, TB_LEN, skirt_h,
+        label = 'E' if sx > 0 else 'W'
+        for fi in range(NF):
+            y0    = -hl + fi       * TB_LEN / NF
+            y1    = -hl + (fi + 1) * TB_LEN / NF
+            y_mid = (y0 + y1) / 2
+            seg   = TB_LEN / NF
+            z_top = TB_PARA * y_mid ** 2 + TB_Z_MID - TB_TOP_T
+            make_box(f'Teqboard_Trim_{label}_{fi}',
+                     (sx * (hw + TRIM_T / 2), y_mid, z_top - TRIM_H / 2),
+                     TRIM_T, seg, TRIM_H,
+                     mat=M_TB_BODY, col=col_table)
+
+    # End-trim at Y = ±hl (the lowest points of the arch)
+    for sy in (+1, -1):
+        label  = 'N' if sy > 0 else 'S'
+        z_end  = TB_Z_EDGE - TB_TOP_T
+        make_box(f'Teqboard_Trim_{label}',
+                 (0.0, sy * (hl + TRIM_T / 2), z_end - TRIM_H / 2),
+                 TB_W + TRIM_T * 2, TRIM_T, TRIM_H,
                  mat=M_TB_BODY, col=col_table)
 
-    # ── 3. Four legs ──────────────────────────────────────────────────────────
-    leg_xs = (+hw * 0.80, -hw * 0.80)
-    leg_ys = (+hl * 0.88, -hl * 0.88)
+    # ── 3. Legs — height driven by their Y position on the arch ───────────────
+    leg_xs = (+hw * 0.78, -hw * 0.78)
+    leg_ys = (+hl * 0.84, -hl * 0.84)
     for i, lx in enumerate(leg_xs):
         for j, ly in enumerate(leg_ys):
-            # Leg top = underside of table slab at this X
-            leg_top_z = TB_PARA * lx**2 + TB_Z_MID - TB_TOP_T
+            leg_top_z = TB_PARA * ly ** 2 + TB_Z_MID - TB_TOP_T
             make_box(f'Teqboard_Leg_{i}{j}',
                      (lx, ly, leg_top_z / 2),
                      TB_LEG_W, TB_LEG_W, leg_top_z,
                      mat=M_TB_LEG, col=col_table)
 
-    # ── 4. Cross braces connecting leg pairs (one per long side) ─────────────
-    for lx in leg_xs:
-        brace_z = (TB_PARA * lx**2 + TB_Z_MID - TB_TOP_T) * 0.40
-        make_box(f'Teqboard_Brace_{"E" if lx>0 else "W"}',
-                 (lx, 0.0, brace_z),
-                 TB_LEG_W * 0.80, TB_LEN * 0.78, TB_LEG_W * 0.80,
-                 mat=M_TB_LEG, col=col_table)
+    # ── 4. X-shaped base — two diagonal members crossing at centre ────────────
+    # Angle: atan2(leg_y, leg_x) so the bars actually connect opposite corners.
+    diag_len  = math.sqrt((leg_xs[0] * 2) ** 2 + (leg_ys[0] * 2) ** 2) * 0.92
+    brace_ang = math.atan2(leg_ys[0], leg_xs[0])   # ~62° for these proportions
+    brace_z   = (TB_PARA * leg_ys[0] ** 2 + TB_Z_MID - TB_TOP_T) * 0.28
+    for sign in (+1, -1):
+        b = make_box(f'Teqboard_XBase_{"+45" if sign>0 else "-45"}',
+                     (0.0, 0.0, brace_z),
+                     diag_len, TB_LEG_W * 0.90, TB_LEG_W * 0.90,
+                     mat=M_TB_LEG, col=col_table)
+        b.rotation_euler[2] = sign * brace_ang
 
-    # ── 5. Net (plexiglass) ───────────────────────────────────────────────────
-    # Runs along X at Y=0, sits on the table surface at the centre (Z = TB_Z_MID)
-    net_z_centre = TB_Z_MID + TB_NET_H / 2
+    # ── 5. Net / filet (plexiglass) ───────────────────────────────────────────
+    # At Y=0 the surface is at its highest point (TB_Z_MID = 0.76 m).
+    # The net runs along X (full width) and stands 14 cm above the surface.
     make_box('Teqboard_Net',
-             (0.0, 0.0, net_z_centre),
+             (0.0, 0.0, TB_Z_MID + TB_NET_H / 2),
              TB_W, TB_NET_T, TB_NET_H,
              mat=M_TB_NET, col=col_table)
 
