@@ -39,6 +39,7 @@ export class AssetManager implements IEntity {
     table:     'table.glb',
     ball01:    'ball01.glb',
     character: 'character.glb',
+    bleachers: 'bleachers.glb',
   };
 
   constructor(scene: Scene) {

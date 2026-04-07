@@ -25,6 +25,9 @@
 
 import { BabylonEngine } from './core/Engine';
 import { AssetManager } from './core/AssetManager';
+import { EventBus } from './core/EventBus';
+import { UIManager } from './ui/UIManager';
+import type { PointScoredEvent } from './ui/HUD';
 import { Scene } from '@babylonjs/core/scene';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
@@ -51,6 +54,7 @@ let player1: Character;
 let player2: Character;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let table: TeqballTable;
+let uiManager: UIManager | undefined;
 const pressedKeys = new Set<string>();
 const controlKeys = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's', 'space']);
 let lastSpacePress = 0;
@@ -141,6 +145,8 @@ async function main(): Promise<void> {
       { mass: 0, restitution: 0.7, friction: 0.4 },
       gameScene
     );
+    // Visual replaced by bleachers.glb — physics body stays active
+    courtFloor.isVisible = false;
     if (courtFloor.physicsBody?.shape) {
       courtFloor.physicsBody.shape.filterMembershipMask = COL_WORLD;
       courtFloor.physicsBody.shape.filterCollideMask    = COL_BALL | COL_PLAYER;
@@ -348,6 +354,18 @@ async function main(): Promise<void> {
       });
     }
 
+    // Hide the table.glb visual — the Teqboard from bleachers.glb takes over.
+    // The physics bodies on these meshes stay active for ball collisions.
+    tableData.meshes.forEach((mesh) => { mesh.isVisible = false; });
+
+    // ── Load bleachers.glb (gradins + surface + Teqboard visuel) ─────────────
+    const bleachersData = await assetManager.loadModel('bleachers');
+    if (bleachersData.meshes.length > 0) {
+      // The GLB is already centred at the origin and exported with Y-Up,
+      // so no repositioning or rotation is needed.
+      bleachersData.meshes[0].position = Vector3.Zero();
+    }
+
     // Load ball visual from ball01.glb, but simulate physics on a clean
     // procedural sphere. This avoids GLB hierarchy / transform issues that can
     // make Havok compute a bad sphere radius and launch the ball upward.
@@ -493,6 +511,38 @@ async function main(): Promise<void> {
     // Hide loading screen
     if (loadingScreen) {
       loadingScreen.style.display = 'none';
+    }
+
+    // ── UI ────────────────────────────────────────────────────────────────
+    uiManager = new UIManager(gameScene);
+
+    // Demo key listener: press P → Player 1 scores, O → Player 2 scores.
+    // Remove this block once MatchManager is wired to CollisionDetector.
+    {
+      const demoScore: [number, number] = [0, 0];
+      const demoSets: [number, number] = [0, 0];
+
+      const awardPoint = (team: 1 | 2): void => {
+        const idx = team - 1;
+        demoScore[idx]++;
+        const otherIdx = 1 - idx;
+        const won = demoScore[idx] >= 25 && demoScore[idx] - demoScore[otherIdx] >= 2;
+        if (won) {
+          demoSets[idx]++;
+          demoScore[0] = 0;
+          demoScore[1] = 0;
+        }
+        EventBus.emit<PointScoredEvent>('match:pointScored', {
+          team,
+          score: [demoScore[0], demoScore[1]],
+          sets:  [demoSets[0],  demoSets[1]],
+        });
+      };
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'p' || e.key === 'P') awardPoint(1);
+        if (e.key === 'o' || e.key === 'O') awardPoint(2);
+      });
     }
 
     // Keyboard controls for ball
