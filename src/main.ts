@@ -65,7 +65,7 @@ const BALL_RESET_HEIGHT = 8 * SCALE;
 const BALL_RESET_X_LIMIT = 10 * SCALE;
 const BALL_RESET_Z_LIMIT = 14 * SCALE;
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   try {
     // Get canvas
     const canvasElement = document.getElementById('renderCanvas');
@@ -695,4 +695,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(console.error);
+
