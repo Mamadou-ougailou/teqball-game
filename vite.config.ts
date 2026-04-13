@@ -47,5 +47,8 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['@babylonjs/core', 'howler'],
+    esbuildOptions: {
+      sourcemap: false,
+    },
   },
 });

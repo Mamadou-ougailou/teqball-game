@@ -28,7 +28,3 @@ yarn-debug.log*
 # Temporary files
 .temp/
 *.tmp
-
-# Asset source files (not compiled)
-assets/textures/raw/*
-!assets/textures/raw/.gitkeep

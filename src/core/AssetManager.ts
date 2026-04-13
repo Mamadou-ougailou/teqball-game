@@ -38,7 +38,11 @@ export class AssetManager implements IEntity {
   private static readonly _paths: Record<string, string> = {
     table:     'table.glb',
     ball01:    'ball01.glb',
-    character: 'character.glb',
+    character: 'Neymar.glb',
+    player:    'Neymar.glb',
+    player_alien: 'Neymar.glb',
+    alien: 'Neymar.glb',
+    neymar: 'Neymar.glb',
   };
 
   constructor(scene: Scene) {

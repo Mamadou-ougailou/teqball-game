@@ -18,23 +18,86 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 // ---------------------------------------------------------------------------
 export const PLAYER_ANIM_NAMES: Record<string, string> = {
   idle:         'idle',
-  jogForward:   'jog',        // update these fragments once you see the console names
-  jogBack:      'jog back',
-  strafeLeft:   'strafe left',
-  strafeRight:  'strafe right',
+  jogForward:   'jogforward',
+  jogBack:      'jogbackward',
+  strafeLeft:   'jogstraferight',
+  strafeRight:  'jogstraferight',
+  reception:    'reception',
+  serve:        'hearserve',
   kick2:        'kick',
   scissorKick:  'scissor',
-  header:       'header',
-  headerBall1:  'header ball 1',
-  headerBall2:  'header ball 2',
-  jogBackDiag1: 'jog back diag 1',
-  jogBackDiag2: 'jog back diag 2',
-  jogFwdDiag1:  'jog forward diag 1',
-  jogFwdDiag2:  'jog forward diag 2',
-  kick1:        'kick 1',
-  knee1:        'knee 1',
-  knee2:        'knee 2',
+  scissorKickLeft: 'scissor',
+  header:       'headkick',
+  headerBall1:  'hearserve',
+  headerBall2:  'hearserve',
+  jogBackDiag1: 'jogbackward',
+  jogBackDiag2: 'jogbackward',
+  jogFwdDiag1:  'jogforward',
+  jogFwdDiag2:  'jogforward',
+  kick1:        'kick',
+  knee1:        'righttoefootreception',
+  knee1Left:    'righttoefootreception',
+  knee2:        'righttoefootreception',
+  serveLeft:    'hearserve',
+  serveRight:   'hearserve',
+  chestKick:    'chest_kick',
+  chestReception: 'chestreception',
+  closeTableLowHeader: 'closetablelowheadkick',
+  closeTableKickRight: 'closetablerightfootkick',
+  highKickLeft: 'highkickleftfoot',
+  runningForward: 'jogforward',
+  joggingQuickForward: 'quickjogforward',
+  joggingStrafeQuick: 'jogstraferight',
+  kneeReceptionRight: 'righttoefootreception',
+  soleKickRight: 'solerightfootkick',
+  toeReceptionRight: 'righttoefootreception',
+  bridgeReception1Left: 'jogforward.001',
+  bridgeReception2Left: 'jogforward.001',
+  bicycleKickLeft: 'bicycle',
+  jumpingHeaderKick: 'jumpheadkick',
   extra:        'extra',
+};
+
+const PLAYER_ANIM_ALIASES: Record<string, string[]> = {
+  idle: ['idle'],
+  jogForward: ['jogforward', 'jog forward', 'running forward'],
+  jogBack: ['jogbackward', 'jog backward', 'backward'],
+  strafeLeft: ['jogstraferight', 'jog strafe right', 'strafe right'],
+  strafeRight: ['jogstraferight', 'jog strafe right', 'strafe right'],
+  reception: ['reception'],
+  serve: ['hearserve', 'hear serve', 'serve'],
+  kick2: ['kick'],
+  scissorKick: ['scissor'],
+  scissorKickLeft: ['scissor'],
+  header: ['headkick'],
+  headerBall1: ['hearserve'],
+  headerBall2: ['hearserve'],
+  jogBackDiag1: ['jogbackward'],
+  jogBackDiag2: ['jogbackward'],
+  jogFwdDiag1: ['jogforward'],
+  jogFwdDiag2: ['jogforward'],
+  kick1: ['kick'],
+  knee1: ['righttoefootreception'],
+  knee1Left: ['righttoefootreception'],
+  knee2: ['righttoefootreception'],
+  serveLeft: ['hearserve'],
+  serveRight: ['hearserve'],
+  chestKick: ['chest_kick'],
+  chestReception: ['chestreception'],
+  closeTableLowHeader: ['closetablelowheadkick'],
+  closeTableKickRight: ['closetablerightfootkick'],
+  highKickLeft: ['highkickleftfoot'],
+  runningForward: ['jogforward'],
+  joggingQuickForward: ['quickjogforward'],
+  joggingStrafeQuick: ['jogstraferight'],
+  kneeReceptionRight: ['righttoefootreception'],
+  soleKickRight: ['solerightfootkick'],
+  toeReceptionRight: ['righttoefootreception'],
+  bridgeReception1Left: ['jogforward.001', 'innerrightfootreception'],
+  bridgeReception2Left: ['jogforward.001', 'innerrightfootreception'],
+  bicycleKickLeft: ['bicycle'],
+  jumpingHeaderKick: ['jumpheadkick'],
+  extra: ['extra'],
 };
 
 // Kept for backwards compatibility — all resolve to -1 (name lookup) now.
@@ -43,6 +106,88 @@ export const PLAYER_ANIM = Object.fromEntries(
 ) as Record<string, number>;
 
 export type PlayerAnimKey = keyof typeof PLAYER_ANIM_NAMES;
+
+const PLAYER_ANIM_ORDER: PlayerAnimKey[] = [
+  'idle',
+  'jogForward',
+  'jogBack',
+  'strafeLeft',
+  'strafeRight',
+  'header',
+  'knee1',
+  'knee1Left',
+  'scissorKick',
+  'scissorKickLeft',
+  'kick2',
+  'headerBall1',
+  'headerBall2',
+  'jogBackDiag1',
+  'jogBackDiag2',
+  'jogFwdDiag1',
+  'jogFwdDiag2',
+  'kick1',
+  'knee2',
+  'serveLeft',
+  'serveRight',
+  'chestKick',
+  'chestReception',
+  'closeTableLowHeader',
+  'closeTableKickRight',
+  'highKickLeft',
+  'runningForward',
+  'joggingQuickForward',
+  'joggingStrafeQuick',
+  'kneeReceptionRight',
+  'soleKickRight',
+  'toeReceptionRight',
+  'bridgeReception1Left',
+  'bridgeReception2Left',
+  'bicycleKickLeft',
+  'jumpingHeaderKick',
+  'extra',
+];
+
+const NEYMAR_EXACT_INDEX_MAP: Partial<Record<PlayerAnimKey, number>> = {
+  jogBack: 40,
+  bicycleKickLeft: 2,
+  bridgeReception1Left: 42,
+  bridgeReception2Left: 42,
+  chestKick: 31,
+  chestReception: 32,
+  closeTableLowHeader: 33,
+  closeTableKickRight: 35,
+  header: 36,
+  headerBall1: 37,
+  highKickLeft: 38,
+  idle: 39,
+  jogForward: 41,
+  strafeLeft: 44,
+  strafeRight: 44,
+  jumpingHeaderKick: 45,
+  joggingQuickForward: 46,
+  knee1: 48,
+  kneeReceptionRight: 48,
+  runningForward: 41,
+  serveLeft: 37,
+  serveRight: 37,
+  soleKickRight: 50,
+  toeReceptionRight: 48,
+};
+
+const MOVEMENT_KEYS = new Set<PlayerAnimKey>([
+  'idle',
+  'jogForward',
+  'jogBack',
+  'strafeLeft',
+  'strafeRight',
+  'jogBackDiag1',
+  'jogBackDiag2',
+  'jogFwdDiag1',
+  'jogFwdDiag2',
+]);
+
+const MOVEMENT_EXCLUDES = ['reception', 'receive', 'control', 'serve', 'kick', 'header', 'knee', 'scissor'];
+const ACTION_EXCLUDES = ['jog', 'run', 'walk', 'strafe', 'move'];
 
 /**
  * AnimationSystem — wraps a flat list of AnimationGroups loaded from a GLB
@@ -56,6 +201,7 @@ export class AnimationSystem {
   private readonly _clips: AnimationGroup[];
   private _active: AnimationGroup | null = null;
   private _activeIndex = -1;
+  private readonly _indexByKey = new Map<string, number>();
 
   // ---------------------------------------------------------------------------
   // Static helper — retarget shadow-armature animation groups to skeleton 0.
@@ -105,13 +251,95 @@ export class AnimationSystem {
       g.stop();
       console.log(`[AnimationSystem] clip[${i}]: "${g.name}"`);
     });
+
+    // Build a robust logical-key -> clip index mapping from GLB clip names.
+    let mappedCount = 0;
+    for (const key of Object.keys(PLAYER_ANIM_NAMES)) {
+      const preferred = PLAYER_ANIM_NAMES[key]?.toLowerCase();
+      const aliases = PLAYER_ANIM_ALIASES[key] ?? [];
+      const candidates = preferred ? [preferred, ...aliases] : aliases;
+      const idx = this._findBestClipIndex(
+        candidates,
+        MOVEMENT_KEYS.has(key as PlayerAnimKey) ? MOVEMENT_EXCLUDES : ACTION_EXCLUDES,
+      );
+      if (idx !== -1) {
+        this._indexByKey.set(key, idx);
+        mappedCount++;
+        console.log(`[AnimationSystem] map "${key}" -> clip[${idx}] "${this._clips[idx].name}"`);
+      } else {
+        console.warn(`[AnimationSystem] no clip resolved for key "${key}"`);
+      }
+    }
+
+    // Fallback for generic GLB names like "Armature.001|mixamo.com|Layer0":
+    // bind unresolved logical actions to clip indices by export order.
+    const max = Math.min(this._clips.length, PLAYER_ANIM_ORDER.length);
+    if (mappedCount === 0) {
+      console.warn('[AnimationSystem] no semantic clip names found; using full index-order fallback mapping');
+    }
+    for (let i = 0; i < max; i++) {
+      const key = PLAYER_ANIM_ORDER[i];
+      if (!this._indexByKey.has(key)) {
+        this._indexByKey.set(key, i);
+        console.log(`[AnimationSystem] fallback map "${key}" -> clip[${i}] "${this._clips[i].name}"`);
+      }
+    }
+
+    if (this._looksLikeNeymarTrackSet()) {
+      for (const [key, idx] of Object.entries(NEYMAR_EXACT_INDEX_MAP) as Array<[PlayerAnimKey, number]>) {
+        if (idx >= 0 && idx < this._clips.length) {
+          this._indexByKey.set(key, idx);
+          console.log(`[AnimationSystem] neymar map "${key}" -> clip[${idx}] "${this._clips[idx].name}"`);
+        }
+      }
+    }
   }
 
-  /** Resolve a key string to a clip index by substring-matching the group name. */
-  private _resolve(keyOrIndex: PlayerAnimKey | number): number {
+  private _looksLikeNeymarTrackSet(): boolean {
+    if (this._clips.length < 30) return false;
+    const names = this._clips.map(c => c.name);
+    const hasBridge = names.some(n => n.toLowerCase().includes('bridgereceptionleftfoot'));
+    const hasChest = names.some(n => n.toLowerCase().includes('chestreception'));
+    const hasServe = names.some(n => n.toLowerCase().includes('serveleftfoot'));
+    const hasIdle = names.some(n => n.toLowerCase().includes('idle'));
+    return hasBridge && hasChest && hasServe && hasIdle;
+  }
+
+  private _findBestClipIndex(fragments: string[], excludedFragments: string[] = []): number {
+    if (fragments.length === 0) return -1;
+
+    let bestIndex = -1;
+    let bestScore = -1;
+    for (let i = 0; i < this._clips.length; i++) {
+      const name = this._clips[i].name.toLowerCase();
+      if (excludedFragments.some(fragment => fragment && name.includes(fragment))) {
+        continue;
+      }
+      for (const fragment of fragments) {
+        const f = fragment.trim().toLowerCase();
+        if (!f) continue;
+        if (name.includes(f)) {
+          // Longer/more specific fragment gets higher score.
+          const score = f.length;
+          if (score > bestScore) {
+            bestScore = score;
+            bestIndex = i;
+          }
+        }
+      }
+    }
+    return bestIndex;
+  }
+
+  /** Resolve logical key, raw name fragment, or index to a clip index. */
+  private _resolve(keyOrIndex: PlayerAnimKey | string | number): number {
     if (typeof keyOrIndex === 'number') return keyOrIndex;
-    const fragment = (PLAYER_ANIM_NAMES[keyOrIndex] ?? keyOrIndex).toLowerCase();
-    const idx = this._clips.findIndex(g => g.name.toLowerCase().includes(fragment));
+
+    const direct = this._indexByKey.get(String(keyOrIndex));
+    if (direct !== undefined) return direct;
+
+    const fragment = String(keyOrIndex).toLowerCase();
+    const idx = this._findBestClipIndex([fragment]);
     if (idx === -1) {
       console.warn(`[AnimationSystem] no clip matching "${fragment}" for key "${keyOrIndex}"`);
     }
@@ -120,23 +348,43 @@ export class AnimationSystem {
 
   get activeIndex(): number { return this._activeIndex; }
 
+  hasClip(keyOrIndex: PlayerAnimKey | string | number): boolean {
+    const index = this._resolve(keyOrIndex);
+    return index >= 0 && index < this._clips.length;
+  }
+
+  getClipNames(): string[] {
+    return this._clips.map(c => c.name);
+  }
+
   /**
    * Play animation by logical key, exact group name fragment, or raw index.
    * If the same clip is already playing, does nothing.
    */
-  play(keyOrIndex: PlayerAnimKey | number, loop = true, speedRatio = 1.0): void {
+  play(keyOrIndex: PlayerAnimKey | string | number, loop = true, speedRatio = 1.0, startFrameOffset = 0): void {
     const index = this._resolve(keyOrIndex);
     if (index < 0 || index >= this._clips.length) return;
-    if (this._activeIndex === index) return;  // already running
+    if (this._activeIndex === index) {
+      if (this._active) this._active.speedRatio = speedRatio;
+      return;  // already running; keep phase and only update rate
+    }
 
     this._active?.stop();
     this._active      = this._clips[index];
     this._activeIndex = index;
-    this._active.start(loop, speedRatio, this._active.from, this._active.to, false);
+    const safeOffset = Number.isFinite(startFrameOffset) ? Math.max(0, startFrameOffset) : 0;
+    const safeStart = Math.min(this._active.to, this._active.from + safeOffset);
+    this._active.start(loop, speedRatio, safeStart, this._active.to, false);
   }
 
   /** Play a one-shot animation, then automatically revert to a loop clip. */
-  playOnce(keyOrIndex: PlayerAnimKey | number, thenPlay: PlayerAnimKey | number = 'idle'): void {
+  playOnce(
+    keyOrIndex: PlayerAnimKey | string | number,
+    thenPlay: PlayerAnimKey | string | number = 'idle',
+    speedRatio = 1.0,
+    onEnd?: () => void,
+    startFrameOffset = 0,
+  ): void {
     const index = this._resolve(keyOrIndex);
     if (index < 0 || index >= this._clips.length) return;
 
@@ -146,9 +394,27 @@ export class AnimationSystem {
     this._activeIndex = index;
 
     clip.onAnimationGroupEndObservable.addOnce(() => {
+      onEnd?.();
       this.play(thenPlay);
     });
-    clip.start(false, 1.0, clip.from, clip.to, false);
+
+    const safeOffset = Number.isFinite(startFrameOffset) ? Math.max(0, startFrameOffset) : 0;
+    const safeStart = Math.min(clip.to, clip.from + safeOffset);
+    clip.start(false, speedRatio, safeStart, clip.to, false);
+  }
+
+  playByIndex(index: number, loop = true, speedRatio = 1.0, startFrameOffset = 0): void {
+    this.play(index, loop, speedRatio, startFrameOffset);
+  }
+
+  playByIndexOnce(
+    index: number,
+    thenPlay: PlayerAnimKey | string | number = 'idle',
+    speedRatio = 1.0,
+    onEnd?: () => void,
+    startFrameOffset = 0,
+  ): void {
+    this.playOnce(index, thenPlay, speedRatio, onEnd, startFrameOffset);
   }
 
   stop(): void {

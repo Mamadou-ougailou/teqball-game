@@ -33,7 +33,7 @@ export const JUMP_HEIGHT = 1.2; // m
 export const CHARACTER_SPEED = 8; // m/s
 
 // ============== MATCH RULES ==============
-export const POINTS_PER_SET = 25;
+export const POINTS_PER_SET = 12;
 export const SETS_TO_WIN = 2;
 export const MAX_TOUCHES_PER_PLAYER = 3; // consecutive touches
 export const MAX_RALLIES = 500; // safety limit per match
