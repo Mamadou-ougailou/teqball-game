@@ -9,6 +9,8 @@ export class HUD implements IEntity {
   private readonly setsLine: HTMLDivElement | null;
   private readonly serveLine: HTMLDivElement | null;
   private readonly cooldownLine: HTMLDivElement | null;
+  private readonly powerMeterWrap: HTMLDivElement | null;
+  private readonly powerMeterFill: HTMLDivElement | null;
   private score: [number, number] = [0, 0];
   private sets: [number, number] = [0, 0];
   private server = 0;
@@ -21,6 +23,8 @@ export class HUD implements IEntity {
       this.setsLine = null;
       this.serveLine = null;
       this.cooldownLine = null;
+      this.powerMeterWrap = null;
+      this.powerMeterFill = null;
       return;
     }
 
@@ -57,7 +61,22 @@ export class HUD implements IEntity {
     cooldownLine.style.opacity = '0.78';
     cooldownLine.style.fontSize = '12px';
 
-    root.append(scoreLine, setsLine, serveLine, cooldownLine);
+    const powerMeterWrap = document.createElement('div');
+    powerMeterWrap.style.marginTop = '8px';
+    powerMeterWrap.style.height = '8px';
+    powerMeterWrap.style.borderRadius = '4px';
+    powerMeterWrap.style.background = 'rgba(255,255,255,0.15)';
+    powerMeterWrap.style.overflow = 'hidden';
+    powerMeterWrap.style.display = 'none';
+
+    const powerMeterFill = document.createElement('div');
+    powerMeterFill.style.height = '100%';
+    powerMeterFill.style.width = '0%';
+    powerMeterFill.style.borderRadius = '4px';
+    powerMeterFill.style.transition = 'width 0.05s linear, background-color 0.1s linear';
+    powerMeterWrap.appendChild(powerMeterFill);
+
+    root.append(scoreLine, setsLine, serveLine, cooldownLine, powerMeterWrap);
     document.body.appendChild(root);
 
     this.root = root;
@@ -65,6 +84,8 @@ export class HUD implements IEntity {
     this.setsLine = setsLine;
     this.serveLine = serveLine;
     this.cooldownLine = cooldownLine;
+    this.powerMeterWrap = powerMeterWrap;
+    this.powerMeterFill = powerMeterFill;
     this.render();
   }
 
@@ -97,6 +118,25 @@ export class HUD implements IEntity {
     this.scoreLine.textContent = `P1 ${this.score[0]}  -  ${this.score[1]} P2`;
     this.setsLine.textContent = `Sets ${this.sets[0]} - ${this.sets[1]}`;
     this.serveLine.textContent = this.matchActive ? `Serve: P${this.server + 1}` : 'Match complete';
+  }
+
+  /**
+   * Show/update the power charge bar. Pass null to hide it.
+   * fraction: 0–1 where 1 = max charge (2 s hold).
+   */
+  setPowerCharge(fraction: number | null): void {
+    if (!this.powerMeterWrap || !this.powerMeterFill) return;
+    if (fraction === null) {
+      this.powerMeterWrap.style.display = 'none';
+      return;
+    }
+    const pct = Math.min(1, Math.max(0, fraction));
+    this.powerMeterWrap.style.display = 'block';
+    this.powerMeterFill.style.width = `${pct * 100}%`;
+    // green → yellow → red as charge builds
+    const r = Math.round(pct < 0.5 ? pct * 2 * 255 : 255);
+    const g = Math.round(pct < 0.5 ? 200 : (1 - (pct - 0.5) * 2) * 200);
+    this.powerMeterFill.style.backgroundColor = `rgb(${r},${g},40)`;
   }
 
   update(_deltaTime: number): void {

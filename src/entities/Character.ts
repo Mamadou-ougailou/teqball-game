@@ -3,8 +3,8 @@ import { ICharacter, CharacterState, GameAction, CharacterStats } from '@core/in
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
-import { AnimationSystem, PlayerAnimKey } from '../animation/AnimationSystem';
-import { AnimConfig, getAnimConfigForClip } from '../data/animationConfig';
+import { AnimationSystem, CharacterAnimData, PlayerAnimKey } from '../animation/AnimationSystem';
+import { ANIM_CONFIG_FPS, AnimConfig, getAnimConfigForClip } from '../data/animationConfig';
 
 export { CharacterState };
 
@@ -15,11 +15,22 @@ type GameplayAction =
   | 'kickCloseHead' | 'kickCloseRightFoot' | 'kickHead'
   | 'kickHighLeft' | 'kickJumpHead' | 'kickSoleRight' | 'kickBicycleLeft' | 'kickChest';
 
+type ActionDefinition = {
+  clipKey: PlayerAnimKey | string;
+  timer: number;
+  strikeBone: 'head' | 'chest' | 'foot';
+  autoMirrorByFoot: boolean;
+  forceMirror: boolean | null;
+};
+
 /**
  * Character/Player entity — wraps the root mesh, skeleton and animation system.
  * Animation is driven externally by calling setMovement() each frame.
  */
 export class Character implements ICharacter {
+  private static readonly ACTION_ANIM_SPEED_RATIO = 1.35;
+  private static readonly ACTION_LOCK_FOLLOW_THROUGH_FRAMES = 8;
+
   readonly id: number;
   readonly stats: CharacterStats;
   readonly mesh: AbstractMesh;
@@ -42,6 +53,7 @@ export class Character implements ICharacter {
   private _idleReturnRotationOffsetYaw = 0;
   private _currentStrikeBoneName: string | null = null;
   private _currentAnimConfig: AnimConfig | null = null;
+  private readonly _socketGroundDistanceByAction = new Map<string, number>();
 
   // Some source clips are authored with left/right semantics inverted.
   // Apply deterministic correction here and keep manual mirror as an XOR override.
@@ -99,6 +111,7 @@ export class Character implements ICharacter {
     stats: CharacterStats,
     animationGroups?: AnimationGroup[],
     modelYawOffset = 0,
+    animData?: CharacterAnimData,
   ) {
     this.id       = id;
     this.mesh     = mesh;
@@ -126,7 +139,7 @@ export class Character implements ICharacter {
       if (skeleton && animationGroups.length > 1) {
         AnimationSystem.retargetToSkeleton(animationGroups, skeleton);
       }
-      this._anim = new AnimationSystem(animationGroups);
+      this._anim = new AnimationSystem(animationGroups, animData);
       this._anim.play('idle', true, 1.0, this._getStartupTrimFrames('idle'));
       this._setFacingCompensationForKey('idle');
     }
@@ -139,6 +152,16 @@ export class Character implements ICharacter {
         return (deg * Math.PI) / 180;
       }
     }
+    // Key token didn't match (e.g. 'jogFwdDiag1') — resolve to actual clip name and retry.
+    const clipName = this._anim?.getClipNameForKey(String(key));
+    if (clipName) {
+      const clipToken = this._normalizeToken(clipName);
+      for (const [fragment, deg] of Character.FACING_COMPENSATION_DEG) {
+        if (clipToken.includes(fragment)) {
+          return (deg * Math.PI) / 180;
+        }
+      }
+    }
     return 0;
   }
 
@@ -148,7 +171,211 @@ export class Character implements ICharacter {
 
   private _getStartupTrimFrames(clipKey: PlayerAnimKey | string): number {
     const animConfig = getAnimConfigForClip(String(clipKey));
-    return Math.max(0, Math.round(animConfig?.startupTrimFrames ?? 0));
+    return Math.max(0, Math.round(animConfig?.startupTrimFrames ?? 3));
+  }
+
+  private _computeActionLockSeconds(animConfig: AnimConfig | null, fallbackSeconds: number, speedRatio: number): number {
+    if (!animConfig) {
+      return fallbackSeconds;
+    }
+
+    const clipLengthFrames = Math.max(1, Math.round(animConfig.clipLengthFrames ?? 1));
+    const contactEndFrame = animConfig.contactWindow
+      ? Math.max(animConfig.contactWindow[0], animConfig.contactWindow[1])
+      : animConfig.contactFrame;
+    const lockEndFrame = Math.min(
+      clipLengthFrames,
+      Math.max(animConfig.contactFrame, contactEndFrame) + Character.ACTION_LOCK_FOLLOW_THROUGH_FRAMES,
+    );
+
+    const fps = Math.max(1, ANIM_CONFIG_FPS);
+    const clampedSpeedRatio = Math.max(0.1, speedRatio);
+    const lockSeconds = lockEndFrame / fps / clampedSpeedRatio;
+    return Math.max(fallbackSeconds, lockSeconds);
+  }
+
+  private _resolveActionDefinition(action: GameplayAction | string): ActionDefinition | null {
+    switch (action) {
+      case 'header':
+      case 'kickHead':
+        return {
+          clipKey: 'header',
+          timer: 0.65,
+          strikeBone: 'head',
+          autoMirrorByFoot: false,
+          forceMirror: false,
+        };
+      case 'kickCloseHead':
+        return {
+          clipKey: 'closeTableLowHeader',
+          timer: 0.68,
+          strikeBone: 'head',
+          autoMirrorByFoot: false,
+          forceMirror: false,
+        };
+      case 'kickJumpHead':
+        return {
+          clipKey: 'jumpingHeaderKick',
+          timer: 0.78,
+          strikeBone: 'head',
+          autoMirrorByFoot: false,
+          forceMirror: false,
+        };
+      case 'chest':
+      case 'kickChest':
+        return {
+          clipKey: 'chestKick',
+          timer: 0.58,
+          strikeBone: 'chest',
+          autoMirrorByFoot: false,
+          forceMirror: null,
+        };
+      case 'receptionChest':
+      case 'prepChest':
+        return {
+          clipKey: 'chestReception',
+          timer: 0.56,
+          strikeBone: 'chest',
+          autoMirrorByFoot: false,
+          forceMirror: null,
+        };
+      case 'knee':
+        return {
+          clipKey: 'knee1',
+          timer: 0.55,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      case 'receptionToe':
+        return {
+          clipKey: 'toeReceptionRight',
+          timer: 0.52,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      case 'receptionInnerRight':
+      case 'prepInnerRight':
+        return {
+          clipKey: 'bridgeReception1Left',
+          timer: 0.54,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      case 'kickCloseRightFoot':
+        return {
+          clipKey: 'closeTableKickRight',
+          timer: 0.66,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      case 'kickSoleRight':
+        return {
+          clipKey: 'soleKickRight',
+          timer: 0.70,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      case 'kickHighLeft':
+        return {
+          clipKey: 'highKickLeft',
+          timer: 0.74,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      case 'kickBicycleLeft':
+        return {
+          clipKey: 'bicycleKickLeft',
+          timer: 0.82,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      case 'scissor':
+        return {
+          clipKey: 'scissorKick',
+          timer: 0.65,
+          strikeBone: 'foot',
+          autoMirrorByFoot: true,
+          forceMirror: null,
+        };
+      default:
+        return null;
+    }
+  }
+
+  private _sampleSocketGroundDistanceForAction(definition: ActionDefinition): number | null {
+    if (!this._anim) return null;
+
+    const animConfig = getAnimConfigForClip(String(definition.clipKey));
+    if (!animConfig) return null;
+
+    const clip = this._anim.getClipByKey(definition.clipKey);
+    if (!clip) return null;
+
+    const startupTrim = this._getStartupTrimFrames(definition.clipKey);
+    const contactFrame = Math.max(0, Math.round(animConfig.contactFrame ?? 0));
+    const sampleFrame = Math.max(clip.from, Math.min(clip.to, clip.from + startupTrim + contactFrame));
+
+    const prevStrikeBone = this._currentStrikeBone;
+    const prevStrikeBoneName = this._currentStrikeBoneName;
+
+    this._anim.stop();
+    clip.start(false, 1.0, clip.from, clip.to, false);
+    clip.goToFrame(sampleFrame);
+    clip.pause();
+
+    this._currentStrikeBone = definition.strikeBone;
+    this._currentStrikeBoneName = animConfig.activeBone?.trim() ? animConfig.activeBone : null;
+    this.mesh.computeWorldMatrix(true);
+    const socketPos = this.getStrikeBonePosition();
+
+    this._currentStrikeBone = prevStrikeBone;
+    this._currentStrikeBoneName = prevStrikeBoneName;
+    clip.stop();
+    this._anim.play('idle', true, 1.0, this._getStartupTrimFrames('idle'));
+
+    if (!Number.isFinite(socketPos.y)) return null;
+    // Court floor top plane is y = 0; distance is socket height above floor.
+    return Math.max(0, socketPos.y);
+  }
+
+  precomputeActionSocketGroundDistances(actions: Array<GameplayAction | string>): void {
+    for (const action of actions) {
+      const key = String(action);
+      if (this._socketGroundDistanceByAction.has(key)) continue;
+
+      const definition = this._resolveActionDefinition(action);
+      if (!definition) continue;
+
+      const distance = this._sampleSocketGroundDistanceForAction(definition);
+      if (distance === null) continue;
+
+      this._socketGroundDistanceByAction.set(key, distance);
+    }
+  }
+
+  getActionSocketGroundDistanceAtContact(action: GameplayAction | string): number | null {
+    const key = String(action);
+    const cached = this._socketGroundDistanceByAction.get(key);
+    if (cached !== undefined) return cached;
+
+    if (this._kickTimer > 0) {
+      return null;
+    }
+
+    const definition = this._resolveActionDefinition(action);
+    if (!definition) return null;
+
+    const sampled = this._sampleSocketGroundDistanceForAction(definition);
+    if (sampled === null) return null;
+    this._socketGroundDistanceByAction.set(key, sampled);
+    return sampled;
   }
 
   /**
@@ -164,8 +391,17 @@ export class Character implements ICharacter {
 
     // Backward-compatible one-shot trigger
     if (kick && this._kickTimer <= 0) {
-      this._kickTimer = 0.55;
-      this._anim.playOnce('knee1', 'idle', 1.0, undefined, this._getStartupTrimFrames('knee1'));
+      const kickSpeedRatio = Character.ACTION_ANIM_SPEED_RATIO;
+      const kickAnimConfig = getAnimConfigForClip('knee1');
+      this._kickTimer = this._computeActionLockSeconds(kickAnimConfig, 0.55, kickSpeedRatio);
+      this._anim.playOnce(
+        'knee1',
+        'idle',
+        kickSpeedRatio,
+        undefined,
+        this._getStartupTrimFrames('knee1'),
+        this._getStartupTrimFrames('idle'),
+      );
       this._state = CharacterState.IDLE; // will resolve via callback
       return;
     }
@@ -247,97 +483,19 @@ export class Character implements ICharacter {
       return false;
     }
 
-    let clipKey: PlayerAnimKey | string = 'header';
-    let timer = 0.65;
-    let strikeBone: 'head' | 'chest' | 'foot' = 'head';
-    let autoMirrorByFoot = false;
-    let forceMirror: boolean | null = null;
-
-    switch (action) {
-      case 'header':
-      case 'kickHead':
-        clipKey = 'header';
-        timer = 0.65;
-        strikeBone = 'head';
-        forceMirror = false;
-        break;
-      case 'kickCloseHead':
-        clipKey = 'closeTableLowHeader';
-        timer = 0.68;
-        strikeBone = 'head';
-        forceMirror = false;
-        break;
-      case 'kickJumpHead':
-        clipKey = 'jumpingHeaderKick';
-        timer = 0.78;
-        strikeBone = 'head';
-        forceMirror = false;
-        break;
-      case 'chest':
-      case 'kickChest':
-        clipKey = 'chestKick';
-        timer = 0.58;
-        strikeBone = 'chest';
-        break;
-      case 'receptionChest':
-      case 'prepChest':
-        clipKey = 'chestReception';
-        timer = 0.56;
-        strikeBone = 'chest';
-        break;
-      case 'knee':
-        clipKey = 'knee1';
-        timer = 0.55;
-        strikeBone = 'foot';
-        autoMirrorByFoot = true;
-        break;
-      case 'receptionToe':
-        clipKey = 'toeReceptionRight';
-        timer = 0.52;
-        autoMirrorByFoot = true;
-        break;
-      case 'receptionInnerRight':
-      case 'prepInnerRight':
-        clipKey = 'bridgeReception1Left';
-        timer = 0.54;
-        strikeBone = 'foot';
-        autoMirrorByFoot = true;
-        break;
-      case 'kickCloseRightFoot':
-        clipKey = 'closeTableKickRight';
-        timer = 0.66;
-        strikeBone = 'foot';
-        autoMirrorByFoot = true;
-        break;
-      case 'kickSoleRight':
-        clipKey = 'soleKickRight';
-        timer = 0.70;
-        strikeBone = 'foot';
-        autoMirrorByFoot = true;
-        break;
-      case 'kickHighLeft':
-        clipKey = 'highKickLeft';
-        timer = 0.74;
-        strikeBone = 'foot';
-        autoMirrorByFoot = true;
-        break;
-      case 'kickBicycleLeft':
-        clipKey = 'bicycleKickLeft';
-        timer = 0.82;
-        strikeBone = 'foot';
-        autoMirrorByFoot = true;
-        break;
-      case 'scissor':
-      default:
-        clipKey = 'scissorKick';
-        strikeBone = 'foot';
-        autoMirrorByFoot = true;
-        break;
+    const definition = this._resolveActionDefinition(action);
+    if (!definition) {
+      return false;
     }
+
+    const { clipKey, timer, strikeBone } = definition;
+    let autoMirrorByFoot = definition.autoMirrorByFoot;
+    let forceMirror = definition.forceMirror;
 
     const animConfig = getAnimConfigForClip(String(clipKey));
 
-    this._kickTimer = timer;
+    const actionSpeedRatio = Character.ACTION_ANIM_SPEED_RATIO;
+    this._kickTimer = this._computeActionLockSeconds(animConfig, timer, actionSpeedRatio);
     this._currentStrikeBone = strikeBone;
     this._currentStrikeBoneName = animConfig?.activeBone?.trim() ? animConfig.activeBone : null;
     this._currentAnimConfig = animConfig;
@@ -370,7 +528,14 @@ export class Character implements ICharacter {
     this._setFacingCompensationForKey(clipKey);
     this._captureFacingYaw();
     const startupTrim = this._getStartupTrimFrames(clipKey);
-    this._anim.playOnce(clipKey, 'idle', 1.0, () => this._restoreFacingYaw(), startupTrim);
+    this._anim.playOnce(
+      clipKey,
+      'idle',
+      actionSpeedRatio,
+      () => this._restoreFacingYaw(),
+      startupTrim,
+      this._getStartupTrimFrames('idle'),
+    );
     return true;
   }
 
@@ -491,7 +656,13 @@ export class Character implements ICharacter {
 
     let bone = null as Skeleton['bones'][number] | null;
     if (this._currentStrikeBone === 'head') {
-      const hit = names.find(n => hasAll(n.key, ['head'])) ?? names.find(n => hasAll(n.key, ['neck']));
+      const hit =
+        names.find(n => hasAll(n.key, ['headsocket'])) ??
+        names.find(n => hasAll(n.key, ['headcontroller'])) ??
+        names.find(n => hasAll(n.key, ['headctrl'])) ??
+        names.find(n => hasAll(n.key, ['headcontrol'])) ??
+        names.find(n => hasAll(n.key, ['head'])) ??
+        names.find(n => hasAll(n.key, ['neck']));
       bone = hit?.bone ?? null;
     } else if (this._currentStrikeBone === 'chest') {
       const hit =
@@ -545,15 +716,21 @@ export class Character implements ICharacter {
     const effectiveMirror = mirrorX !== this._needsAutoMirrorByKey(key);
     this._setMirrorX(effectiveMirror);
     this._setFacingCompensationForKey(key);
-    const animConfig = getAnimConfigForClip(String(key));
-    const startupTrim = Math.max(0, Math.round(animConfig?.startupTrimFrames ?? 0));
+    const startupTrim = this._getStartupTrimFrames(key);
     if (loop) {
-        this._anim?.play(key, true, 1.0, startupTrim);
+      this._anim?.play(key, true, 1.0, startupTrim);
       return;
     }
 
     this._captureFacingYaw();
-    this._anim?.playOnce(key, 'idle', 1.0, onEnd ?? (() => this._restoreFacingYaw()), startupTrim);
+    this._anim?.playOnce(
+      key,
+      'idle',
+      1.0,
+      onEnd ?? (() => this._restoreFacingYaw()),
+      startupTrim,
+      this._getStartupTrimFrames('idle'),
+    );
   }
 
   getAnimationClipNames(): string[] {
@@ -579,6 +756,7 @@ export class Character implements ICharacter {
     }));
 
     const hit =
+      names.find(n => n.key.includes('headsocket')) ??
       names.find(n => n.key.includes('headcontroller')) ??
       names.find(n => n.key.includes('headctrl')) ??
       names.find(n => n.key.includes('headcontrol')) ??
@@ -591,6 +769,30 @@ export class Character implements ICharacter {
     return hit.bone.getAbsolutePosition(this.mesh);
   }
 
+  getHandControlPosition(hand: 'left' | 'right'): Vector3 {
+    const side = hand === 'right' ? 'right' : 'left';
+    const fallbackLocal = new Vector3(hand === 'right' ? 0.22 : -0.22, 1.28, 0.16);
+    if (!this.skeleton) {
+      return Vector3.TransformCoordinates(fallbackLocal, this.mesh.getWorldMatrix());
+    }
+
+    const names = this.skeleton.bones.map(b => ({
+      bone: b,
+      key: b.name.toLowerCase().replace(/[._\s-]/g, ''),
+    }));
+
+    const hit =
+      names.find(n => n.key.includes(`${side}hand`)) ??
+      names.find(n => n.key.includes(`${side}wrist`)) ??
+      names.find(n => n.key.includes(`${side}palm`)) ??
+      names.find(n => n.key.includes(side) && n.key.includes('forearm'));
+
+    if (!hit) {
+      return Vector3.TransformCoordinates(fallbackLocal, this.mesh.getWorldMatrix());
+    }
+    return hit.bone.getAbsolutePosition(this.mesh);
+  }
+
   playAnimationClipByIndex(index: number, loop = false, mirrorX = false, speedRatio = 1.0, onEnd?: () => void): void {
     const effectiveMirror = mirrorX !== this._needsAutoMirrorByClipIndex(index);
     this._setMirrorX(effectiveMirror);
@@ -598,11 +800,12 @@ export class Character implements ICharacter {
     if (clipName) {
       this._setFacingCompensationForKey(clipName);
     }
+    const startupTrim = this._getStartupTrimFrames(clipName ?? 'idle');
     if (loop) {
-      this._anim?.playByIndex(index, true, speedRatio);
+      this._anim?.playByIndex(index, true, speedRatio, startupTrim);
       return;
     }
-    this._anim?.playByIndexOnce(index, 'idle', speedRatio, onEnd);
+    this._anim?.playByIndexOnce(index, 'idle', speedRatio, onEnd, startupTrim, this._getStartupTrimFrames('idle'));
   }
 
   getCurrentAnimation(): string {

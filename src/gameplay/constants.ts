@@ -1,5 +1,5 @@
 /** Points needed to win a set (must also lead by ≥ 2). */
-export const POINTS_PER_SET = 12;
+export const POINTS_PER_SET = 20;
 
 /** Number of sets needed to win the match. */
 export const SETS_TO_WIN = 2;

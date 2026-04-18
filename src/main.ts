@@ -3,7 +3,7 @@
  * Phase 0: Load assets and display scene with proper positioning
  * 
  * SCALING GUIDE:
- * - All measurements use SCALE as a multiplier (currently 1.0)
+ * - All measurements use SCALE as a multiplier (currently 1.5)
  * - Court dimensions: 16m (length) × 12m (width)
  * - Table dimensions: 3m (length) × 1.7m (width)
  * - To scale entire scene: change SCALE constant below
@@ -47,14 +47,17 @@ import { PhysicsAggregate } from '@babylonjs/core/Physics/v2/physicsAggregate';
 import { PhysicsShapeType } from '@babylonjs/core/Physics/v2/IPhysicsEnginePlugin';
 import '@babylonjs/core/Physics/physicsEngineComponent';
 import {
+  ANIM_CONFIG_FPS,
   getAnimConfigForAction,
   getAnimConfigForClip,
   getContactFrameRatio,
   resolveAnimBallSpeedValue,
   resolveAnimReachUnits,
 } from './data/animationConfig';
+import { InputManager } from './systems/InputManager';
+import neymarAnimData from './data/characters/neymar.json';
 
-const SCALE = 1.0; // Global scale factor
+const SCALE = 1.5; // Global scale factor
 
 let gameScene: Scene;
 let assetManager: AssetManager;
@@ -64,6 +67,7 @@ let player2: Character;
 let matchManager: MatchManager;
 let hud: HUD;
 let pointAnnouncement: PointAnnouncement;
+let inputManager: InputManager;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let table: TeqballTable;
 const pressedKeys = new Set<string>();
@@ -94,6 +98,24 @@ let p2KickButtonHeld = false;
 const DOUBLE_TAP_WINDOW_MS = 260;
 const pendingPrepSuperHigh: [boolean, boolean] = [false, false];
 const pendingKickPowerBoost: [boolean, boolean] = [false, false];
+// D-pad aim snapshot captured at the moment the human player presses the kick button.
+// x: -1 (left) / 0 (center) / +1 (right), z: -1 (near/net) / 0 / +1 (far/deep)
+const p1KickAim = { x: 0, z: 0 };
+// Hold-to-charge: timestamp (ms) when Space was pressed, -1 = not charging.
+let p1KickChargeStart = -1;
+// Grace-period auto-kick: timestamp (ms) when the kick phase started for P1, -1 = not counting.
+let p1KickGraceStart = -1;
+const P1_KICK_GRACE_MS = 2500;
+// Power multiplier consumed at kick-hit time (set on Space release).
+const p1KickPowerMult = { value: 1.0 };
+// Maps hold duration (ms) to a speed multiplier relative to the clip's default speed.
+const KICK_CHARGE_TABLE: Array<[number, number]> = [
+  [300,      0.80],
+  [700,      1.00],
+  [1200,     1.20],
+  [2000,     1.45],
+  [Infinity, 1.75],
+];
 let animationPreviewMode = false;
 let animationPreviewPlayer = 1;
 let animationPreviewClipIndex = 0;
@@ -104,14 +126,37 @@ let animationPreviewLockedYaw: number | null = null;
 // Spawn ball well above the table surface (table top is ~0.76 m; ball radius 0.11 m)
 const BALL_SPAWN_POSITION = new Vector3(0, 1.5 * SCALE, 0);
 const BALL_MAX_UPWARD_SPEED = 8 * SCALE;
+const BALL_MAX_DOWNWARD_SPEED = 18 * SCALE;
 const BALL_RESET_HEIGHT = 8 * SCALE;
+const BALL_RESET_MIN_Y = -4 * SCALE;
 const BALL_RESET_X_LIMIT = 10 * SCALE;
 const BALL_RESET_Z_LIMIT = 14 * SCALE;
 const PLAYER_MODEL_YAW_OFFSET = -Math.PI / 2;
-const ENABLE_P1_AI = true;
+const ENABLE_P1_AI = true; // AI vs AI preview mode
 const ENABLE_P2_AI = true;
-const PLAYER_SPAWN_Z = 3.8 * SCALE;
+const SERVE_LINE_Z = 3.5 * SCALE;
+const PLAYER_SPAWN_Z = 4.2 * SCALE;
 const PLAYER_TABLE_CLEARANCE_Z = 2.3 * SCALE;
+const PURE_BALL_PHYSICS = true;
+const ENABLE_BALL_ASSIST = !PURE_BALL_PHYSICS; // scripted ball arcs for auto-touches + aim kick
+const TABLE_SCALE = 1.0;
+const WORLD_BOUNCE_RESTITUTION = 0.82;
+const TABLE_BOUNCE_RESTITUTION = 0.84;
+const BALL_BOUNCE_RESTITUTION = 0.84;
+const GLOBAL_KICK_VELOCITY_MULTIPLIER = 1.20;
+// Table always uses MESH collider — traces actual GLB triangles so it matches the visual surface.
+const AI_BEHIND_SERVE_TARGET_Z = SERVE_LINE_Z + 0.55 * SCALE;
+const AI_PREP_STEP_IN_TARGET_Z = SERVE_LINE_Z - 0.65 * SCALE;
+const AI_FINAL_KICK_TARGET_Z = SERVE_LINE_Z - 1.00 * SCALE;
+const AI_SHORT_RETURN_STEP_IN_Z = SERVE_LINE_Z - 0.35 * SCALE;
+const AI_LOW_SPEED_RETURN_THRESHOLD = 2.8 * SCALE;
+const SERVE_READY_PAUSE_SECONDS = 0.35;
+const SERVE_FLIGHT_LOCK_MAX_SECONDS = PURE_BALL_PHYSICS ? 4.0 : 1.6;
+const SERVE_TOSS_RIGHT_ANGLE_DEG = -45;
+const SERVE_TOSS_FORWARD_ANGLE_DEG = -30;
+const SERVE_TOSS_HEIGHT_MULT = 3.15;
+const SERVE_TOSS_CONTACT_RIGHT_MAX = 0.16;
+const SERVE_TOSS_CONTACT_FORWARD_MAX = 0.12;
 
 type CourtSide = 0 | 1; // 0 = P1/negative Z side, 1 = P2/positive Z side
 type OffensiveAction =
@@ -120,7 +165,22 @@ type OffensiveAction =
   | 'prepChest' | 'prepInnerRight'
   | 'kickCloseHead' | 'kickCloseRightFoot' | 'kickHead'
   | 'kickHighLeft' | 'kickJumpHead' | 'kickSoleRight' | 'kickBicycleLeft' | 'kickChest';
-type ServePhase = 'ready' | 'toss' | 'strike';
+const SOCKET_HEIGHT_CALIBRATION_ACTIONS: OffensiveAction[] = [
+  'receptionChest',
+  'receptionToe',
+  'receptionInnerRight',
+  'prepChest',
+  'prepInnerRight',
+  'kickCloseHead',
+  'kickCloseRightFoot',
+  'kickHead',
+  'kickHighLeft',
+  'kickJumpHead',
+  'kickSoleRight',
+  'kickBicycleLeft',
+  'kickChest',
+];
+type ServePhase = 'ready' | 'toss' | 'strike' | 'flight';
 type ServeState = {
   active: boolean;
   server: CourtSide;
@@ -229,16 +289,30 @@ async function main(): Promise<void> {
     floorMat.diffuseColor = new Color3(0.2, 0.2, 0.2);
     courtFloor.material = floorMat;
 
-    // Add physics to floor (static, bouncy for gameplay)
+    // Use a thick invisible collider for the court to avoid rare pass-throughs
+    // that can happen with very thin ground collision shapes at high speed.
+    const courtFloorCollider = MeshBuilder.CreateBox(
+      'courtFloorCollider',
+      {
+        width: 12 * SCALE,
+        depth: 16 * SCALE,
+        height: 0.45 * SCALE,
+      },
+      gameScene,
+    );
+    courtFloorCollider.position = new Vector3(0, -0.225 * SCALE, 0);
+    courtFloorCollider.isVisible = false;
+    courtFloorCollider.isPickable = false;
+
     new PhysicsAggregate(
-      courtFloor,
+      courtFloorCollider,
       PhysicsShapeType.BOX,
-      { mass: 0, restitution: 0.7, friction: 0.4 },
+      { mass: 0, restitution: WORLD_BOUNCE_RESTITUTION, friction: 0.4 },
       gameScene
     );
-    if (courtFloor.physicsBody?.shape) {
-      courtFloor.physicsBody.shape.filterMembershipMask = COL_WORLD;
-      courtFloor.physicsBody.shape.filterCollideMask    = COL_BALL | COL_PLAYER;
+    if (courtFloorCollider.physicsBody?.shape) {
+      courtFloorCollider.physicsBody.shape.filterMembershipMask = COL_WORLD;
+      courtFloorCollider.physicsBody.shape.filterCollideMask    = COL_BALL | COL_PLAYER;
     }
 
     // Create invisible walls around court for natural bouncing
@@ -253,7 +327,7 @@ async function main(): Promise<void> {
     }, gameScene);
     leftWall.position = new Vector3(-6 * SCALE - wallThickness / 2, wallHeight / 2, 0);
     leftWall.isVisible = false;
-    new PhysicsAggregate(leftWall, PhysicsShapeType.BOX, { mass: 0, restitution: 0.7, friction: 0.3 }, gameScene);
+    new PhysicsAggregate(leftWall, PhysicsShapeType.BOX, { mass: 0, restitution: WORLD_BOUNCE_RESTITUTION, friction: 0.3 }, gameScene);
     
     // Right wall
     const rightWall = MeshBuilder.CreateBox('rightWall', {
@@ -263,7 +337,7 @@ async function main(): Promise<void> {
     }, gameScene);
     rightWall.position = new Vector3(6 * SCALE + wallThickness / 2, wallHeight / 2, 0);
     rightWall.isVisible = false;
-    new PhysicsAggregate(rightWall, PhysicsShapeType.BOX, { mass: 0, restitution: 0.7, friction: 0.3 }, gameScene);
+    new PhysicsAggregate(rightWall, PhysicsShapeType.BOX, { mass: 0, restitution: WORLD_BOUNCE_RESTITUTION, friction: 0.3 }, gameScene);
     
     // Front wall
     const frontWall = MeshBuilder.CreateBox('frontWall', {
@@ -273,7 +347,7 @@ async function main(): Promise<void> {
     }, gameScene);
     frontWall.position = new Vector3(0, wallHeight / 2, -8 * SCALE - wallThickness / 2);
     frontWall.isVisible = false;
-    new PhysicsAggregate(frontWall, PhysicsShapeType.BOX, { mass: 0, restitution: 0.7, friction: 0.3 }, gameScene);
+    new PhysicsAggregate(frontWall, PhysicsShapeType.BOX, { mass: 0, restitution: WORLD_BOUNCE_RESTITUTION, friction: 0.3 }, gameScene);
     
     // Back wall
     const backWall = MeshBuilder.CreateBox('backWall', {
@@ -283,7 +357,7 @@ async function main(): Promise<void> {
     }, gameScene);
     backWall.position = new Vector3(0, wallHeight / 2, 8 * SCALE + wallThickness / 2);
     backWall.isVisible = false;
-    new PhysicsAggregate(backWall, PhysicsShapeType.BOX, { mass: 0, restitution: 0.7, friction: 0.3 }, gameScene);
+    new PhysicsAggregate(backWall, PhysicsShapeType.BOX, { mass: 0, restitution: WORLD_BOUNCE_RESTITUTION, friction: 0.3 }, gameScene);
 
     // Assign COL_WORLD to all four invisible walls
     for (const wall of [leftWall, rightWall, frontWall, backWall]) {
@@ -311,7 +385,7 @@ async function main(): Promise<void> {
     halfwayLine.color = whiteColor;
 
     // Service lines (1.5m wide, 3.5m from center)
-    const serviceLinesDist = 3.5 * SCALE;
+    const serviceLinesDist = SERVE_LINE_Z;
     const serviceLineWidth = 1.5 * SCALE;
 
     const serviceLineTop = MeshBuilder.CreateLines(
@@ -380,7 +454,7 @@ async function main(): Promise<void> {
       const boundingInfo = tableData.meshes[0].getHierarchyBoundingVectors();
       const size = boundingInfo.max.subtract(boundingInfo.min);
       const currentLength = Math.max(size.x, size.z);
-      const desiredTableLength = 3 * SCALE;
+      const desiredTableLength = 3 * TABLE_SCALE;
       const scaleFactor = desiredTableLength / currentLength;
 
       tableData.meshes.forEach((mesh) => {
@@ -389,85 +463,93 @@ async function main(): Promise<void> {
 
       // Position table at center
       table = new TeqballTable(tableData.meshes);
-      table.meshes[0].position = new Vector3(0, 0 * SCALE, 0);
+      table.meshes[0].position = new Vector3(0, 0 * TABLE_SCALE, 0);
       table.meshes[0].rotation = new Vector3(0, Math.PI / 2, 0); // No rotation - align with court axes
 
       // Apply position/rotation to all table meshes
       for (let i = 1; i < tableData.meshes.length; i++) {
-        tableData.meshes[i].position = new Vector3(0, 0.5 * SCALE, 0);
+        tableData.meshes[i].position = new Vector3(0, 0.5 * TABLE_SCALE, 0);
         tableData.meshes[i].rotation = new Vector3(0, 0, 0);
         tableData.meshes[i].isVisible = true;
       }
       
+      {
+        // Use one dominant table mesh for physics — pick the mesh with the largest
+        // horizontal footprint (the playing surface, not legs or decorative parts).
+        const colliderCandidates = tableData.meshes.filter((mesh) => mesh.getTotalVertices() > 0);
+        let tableColliderMesh = colliderCandidates[0] ?? null;
+        let bestFootprint = 0;
 
+        for (const mesh of colliderCandidates) {
+          const bounds = mesh.getHierarchyBoundingVectors(true);
+          const size = bounds.max.subtract(bounds.min);
+          const footprint = Math.abs(size.x * size.z);
+          if (footprint > bestFootprint) {
+            bestFootprint = footprint;
+            tableColliderMesh = mesh;
+          }
+        }
 
-      // Add physics to table using the exact mesh geometry.
-      // The table is one solid closed mesh — MESH shape traces every triangle,
-      // preserving the curved surface and the net ridge precisely.
-      //
-      // Restitution 0.72: realistic teqball table coefficient (~0.70–0.76).
-      // Havok uses max(r_ball, r_table) as the combined restitution so
-      // keeping both values at 0.72 gives a predictable 0.72 combined bounce.
-      tableData.meshes.forEach((mesh) => {
-        const totalVertices = mesh.getTotalVertices();
-        if (totalVertices > 0) {
+        if (tableColliderMesh) {
+          // MESH traces every triangle in the GLB exactly, so it always matches the
+          // visual surface regardless of geometry changes. CONVEX_HULL is the fallback.
+          let shapeUsed: PhysicsShapeType = PhysicsShapeType.MESH;
+
           try {
             new PhysicsAggregate(
-              mesh,
+              tableColliderMesh,
               PhysicsShapeType.MESH,
-              { mass: 0, restitution: 0.72, friction: 0.20 },
+              { mass: 0, restitution: TABLE_BOUNCE_RESTITUTION, friction: 0.20 },
               gameScene
             );
           } catch (_err) {
-            // Fallback — should never happen on a valid closed mesh
+            shapeUsed = PhysicsShapeType.CONVEX_HULL;
             new PhysicsAggregate(
-              mesh,
+              tableColliderMesh,
               PhysicsShapeType.CONVEX_HULL,
-              { mass: 0, restitution: 0.72, friction: 0.20 },
+              { mass: 0, restitution: TABLE_BOUNCE_RESTITUTION, friction: 0.20 },
               gameScene
             );
           }
 
-          if (mesh.physicsBody?.shape) {
-            // Table is static world geometry — only the ball needs to interact
-            mesh.physicsBody.shape.filterMembershipMask = COL_WORLD;
-            mesh.physicsBody.shape.filterCollideMask    = COL_BALL;
+          if (tableColliderMesh.physicsBody?.shape) {
+            tableColliderMesh.physicsBody.shape.filterMembershipMask = COL_WORLD;
+            tableColliderMesh.physicsBody.shape.filterCollideMask    = COL_BALL;
 
-            // Mesh welding: when a sphere rolls over a MESH shape, every internal
-            // triangle edge produces an abrupt normal flip that sends the ball
-            // sideways.  HP_Shape_SetWeldingType(shape, 3) merges adjacent triangle
-            // normals (TWO_SIDED mode) so the contact normal transitions smoothly.
-            const hpShape = (mesh.physicsBody.shape as any)._pluginData?.hpShape as unknown;
-            if (hk && hpShape !== undefined) {
-              (hk['HP_Shape_SetWeldingType'] as Function)?.(hpShape, 3);
+            if (shapeUsed === PhysicsShapeType.MESH) {
+              // Mesh welding smooths adjacent triangle normals for rolling contacts.
+              const hpShape = (tableColliderMesh.physicsBody.shape as any)._pluginData?.hpShape as unknown;
+              if (hk && hpShape !== undefined) {
+                (hk['HP_Shape_SetWeldingType'] as Function)?.(hpShape, 3);
+              }
             }
           }
         }
-      });
+      }
     }
 
-    // Load ball visual from ball01.glb, but simulate physics on a clean
-    // procedural sphere. This avoids GLB hierarchy / transform issues that can
-    // make Havok compute a bad sphere radius and launch the ball upward.
-    const ballData = await assetManager.loadModel('ball01');
-    if (ballData.meshes.length === 0) {
-      throw new Error('ball01 model loaded but has no meshes');
-    }
-
-    const ballRootMesh = ballData.meshes[0];
-
-    // Measure raw hierarchy size at scale (1,1,1).
-    ballRootMesh.scaling = new Vector3(1, 1, 1);
-    ballRootMesh.computeWorldMatrix(true);
-    const ballHierarchyBounds = ballRootMesh.getHierarchyBoundingVectors(true);
-    const rawSize = ballHierarchyBounds.max.subtract(ballHierarchyBounds.min);
-    const rawDiameter = Math.max(rawSize.x, rawSize.y, rawSize.z);
-
+    // Fully procedural ball (visual + physics) to avoid GLB hierarchy issues
+    // during serve toss and strike contact windows.
     const desiredDiameter = 0.22 * SCALE;
-    const ballScale = rawDiameter > 0 ? desiredDiameter / rawDiameter : 1;
     const ballRadius = desiredDiameter / 2;
     const BALL_VISUAL_SPIN_MAX = 26.0;
     let ballSpinTwist = 0;
+    const ballOscillationWindow = 0.16;
+    const ballOscillationMinFlipSpeed = 1.45 * SCALE;
+    const ballOscillationMaxTravelPerFrame = 0.16 * SCALE;
+    const ballOscillationFlipThreshold = 3;
+    const ballOscillationDampFactor = 0.22;
+    const ballOscillationPopY = 1.55 * SCALE;
+    const ballOscillationNudge = 0.08 * SCALE;
+    let oscillationWindowTimer = 0;
+    let oscillationFlipCountX = 0;
+    let oscillationFlipCountZ = 0;
+    const oscillationPrevVelocity = Vector3.Zero();
+    const oscillationPrevPosition = BALL_SPAWN_POSITION.clone();
+    const previousBallPosition = BALL_SPAWN_POSITION.clone();
+    let ballInteractionLockSide: CourtSide | null = null;
+    let ballInteractionLockTimer = 0;
+    let previousBallVelocityY = 0;
 
     const ballPhysicsMesh = MeshBuilder.CreateSphere(
       'ballPhysics',
@@ -478,29 +560,41 @@ async function main(): Promise<void> {
     ballPhysicsMesh.visibility = 0;
     ballPhysicsMesh.isPickable = false;
 
-    // Parent the visible GLB ball to the procedural physics sphere so the
-    // visual follows the simulated root exactly.
+    const ballRootMesh = MeshBuilder.CreateSphere(
+      'ballVisual',
+      { diameter: desiredDiameter * 0.985, segments: 24 },
+      gameScene,
+    );
     ballRootMesh.setParent(ballPhysicsMesh);
     ballRootMesh.position = Vector3.Zero();
     ballRootMesh.rotation = Vector3.Zero();
-    ballRootMesh.scaling = new Vector3(ballScale, ballScale, ballScale);
+    ballRootMesh.isPickable = false;
+
+    const ballMaterial = new StandardMaterial('ballMaterial', gameScene);
+    ballMaterial.diffuseColor = new Color3(0.97, 0.97, 0.97);
+    ballMaterial.specularColor = new Color3(0.28, 0.28, 0.28);
+    ballMaterial.emissiveColor = new Color3(0.04, 0.04, 0.04);
+    ballRootMesh.material = ballMaterial;
 
     ball = new Ball(ballPhysicsMesh);
 
     new PhysicsAggregate(
       ballPhysicsMesh,
       PhysicsShapeType.SPHERE,
-      { mass: 0.057, restitution: 0.72, friction: 0.3 },
+      { mass: 0.057, restitution: BALL_BOUNCE_RESTITUTION, friction: 0.3 },
       gameScene
     );
 
     if (ballPhysicsMesh.physicsBody) {
+      // Allow mesh.position writes to sync the physics body (needed for serve toss placement).
+      ballPhysicsMesh.physicsBody.disablePreStep = false;
+
       ballPhysicsMesh.physicsBody.setLinearDamping(0.05);
       ballPhysicsMesh.physicsBody.setAngularDamping(0.2);
 
       if (ballPhysicsMesh.physicsBody.shape) {
         ballPhysicsMesh.physicsBody.shape.filterMembershipMask = COL_BALL;
-        ballPhysicsMesh.physicsBody.shape.filterCollideMask    = COL_WORLD | COL_PLAYER;
+        ballPhysicsMesh.physicsBody.shape.filterCollideMask    = PURE_BALL_PHYSICS ? COL_WORLD : (COL_WORLD | COL_PLAYER);
       }
 
       const hpBallBody = (ballPhysicsMesh.physicsBody as any)._pluginData?.hpBody as unknown;
@@ -526,21 +620,136 @@ async function main(): Promise<void> {
       ballRootMesh.rotation.z += wz * deltaTime * 0.85;
       ballRootMesh.rotation.y += ballSpinTwist * deltaTime * 0.25;
 
-      const ang = ball.mesh.physicsBody.getAngularVelocity();
-      const targetAng = new Vector3(
-        Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, wx * 0.22)),
-        Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, ballSpinTwist * 0.35)),
-        Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, wz * 0.22)),
-      );
-      const blend = 0.14;
-      ball.mesh.physicsBody.setAngularVelocity(new Vector3(
-        ang.x + (targetAng.x - ang.x) * blend,
-        ang.y + (targetAng.y - ang.y) * blend,
-        ang.z + (targetAng.z - ang.z) * blend,
-      ));
+      if (!PURE_BALL_PHYSICS) {
+        const ang = ball.mesh.physicsBody.getAngularVelocity();
+        const targetAng = new Vector3(
+          Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, wx * 0.22)),
+          Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, ballSpinTwist * 0.35)),
+          Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, wz * 0.22)),
+        );
+        const blend = 0.14;
+        ball.mesh.physicsBody.setAngularVelocity(new Vector3(
+          ang.x + (targetAng.x - ang.x) * blend,
+          ang.y + (targetAng.y - ang.y) * blend,
+          ang.z + (targetAng.z - ang.z) * blend,
+        ));
+      }
 
       ballSpinTwist *= Math.max(0, 1 - deltaTime * 1.6);
       if (Math.abs(ballSpinTwist) < 0.05) ballSpinTwist = 0;
+    };
+
+    const resetBallOscillationGuard = (): void => {
+      oscillationWindowTimer = 0;
+      oscillationFlipCountX = 0;
+      oscillationFlipCountZ = 0;
+      previousBallVelocityY = 0;
+      oscillationPrevVelocity.set(0, 0, 0);
+      ballInteractionLockSide = null;
+      ballInteractionLockTimer = 0;
+      if (ball?.mesh) {
+        oscillationPrevPosition.copyFrom(ball.mesh.position);
+        previousBallPosition.copyFrom(ball.mesh.position);
+      } else {
+        oscillationPrevPosition.copyFrom(BALL_SPAWN_POSITION);
+        previousBallPosition.copyFrom(BALL_SPAWN_POSITION);
+      }
+    };
+
+    const applyTableAntiTunnelBounce = (): void => {
+      if (!PURE_BALL_PHYSICS || !ball?.mesh?.physicsBody) {
+        return;
+      }
+
+      const vel = ball.mesh.physicsBody.getLinearVelocity();
+      if (vel.y >= -0.05 * SCALE) {
+        return;
+      }
+
+      const tableHalfWidth = 0.85 * TABLE_SCALE + 0.14 * SCALE;
+      const tableHalfLength = 1.5 * TABLE_SCALE + 0.16 * SCALE;
+      const tableContactCenterY = 0.87 * TABLE_SCALE;
+      const crossTolerance = 0.03 * SCALE;
+
+      const isInsideTableXZ = (p: Vector3): boolean => (
+        Math.abs(p.x) <= tableHalfWidth &&
+        Math.abs(p.z) <= tableHalfLength
+      );
+
+      // Swept segment vs AABB in XZ to detect crossing even when both endpoints
+      // are just outside due high lateral speed.
+      const segmentCrossesTableXZ = (from: Vector3, to: Vector3): boolean => {
+        const minX = -tableHalfWidth;
+        const maxX = tableHalfWidth;
+        const minZ = -tableHalfLength;
+        const maxZ = tableHalfLength;
+
+        let tMin = 0;
+        let tMax = 1;
+
+        const dx = to.x - from.x;
+        if (Math.abs(dx) < 1e-6) {
+          if (from.x < minX || from.x > maxX) return false;
+        } else {
+          const tx1 = (minX - from.x) / dx;
+          const tx2 = (maxX - from.x) / dx;
+          const tEnterX = Math.min(tx1, tx2);
+          const tExitX = Math.max(tx1, tx2);
+          tMin = Math.max(tMin, tEnterX);
+          tMax = Math.min(tMax, tExitX);
+          if (tMin > tMax) return false;
+        }
+
+        const dz = to.z - from.z;
+        if (Math.abs(dz) < 1e-6) {
+          if (from.z < minZ || from.z > maxZ) return false;
+        } else {
+          const tz1 = (minZ - from.z) / dz;
+          const tz2 = (maxZ - from.z) / dz;
+          const tEnterZ = Math.min(tz1, tz2);
+          const tExitZ = Math.max(tz1, tz2);
+          tMin = Math.max(tMin, tEnterZ);
+          tMax = Math.min(tMax, tExitZ);
+          if (tMin > tMax) return false;
+        }
+
+        return tMax >= 0 && tMin <= 1;
+      };
+
+      const crossedPlaneFromAbove =
+        previousBallPosition.y >= tableContactCenterY + crossTolerance &&
+        ball.mesh.position.y <= tableContactCenterY - crossTolerance;
+      const sweptOverTable =
+        segmentCrossesTableXZ(previousBallPosition, ball.mesh.position) ||
+        isInsideTableXZ(previousBallPosition) ||
+        isInsideTableXZ(ball.mesh.position);
+
+      const deepInsideFallback =
+        vel.y < -0.35 * SCALE &&
+        ball.mesh.position.y < tableContactCenterY - 0.06 * SCALE &&
+        isInsideTableXZ(ball.mesh.position);
+
+      if (!((crossedPlaneFromAbove && sweptOverTable) || deepInsideFallback)) {
+        return;
+      }
+
+      let impactX = ball.mesh.position.x;
+      let impactZ = ball.mesh.position.z;
+      const dy = ball.mesh.position.y - previousBallPosition.y;
+      if (Math.abs(dy) > 1e-6) {
+        const t = (tableContactCenterY - previousBallPosition.y) / dy;
+        const clampedT = Math.max(0, Math.min(1, t));
+        impactX = previousBallPosition.x + (ball.mesh.position.x - previousBallPosition.x) * clampedT;
+        impactZ = previousBallPosition.z + (ball.mesh.position.z - previousBallPosition.z) * clampedT;
+      }
+
+      ball.mesh.position.x = Math.max(-tableHalfWidth, Math.min(tableHalfWidth, impactX));
+      ball.mesh.position.z = Math.max(-tableHalfLength, Math.min(tableHalfLength, impactZ));
+      ball.mesh.position.y = tableContactCenterY + 0.002 * SCALE;
+
+      const reboundVy = Math.max(1.35 * SCALE, Math.abs(vel.y) * TABLE_BOUNCE_RESTITUTION);
+      ball.mesh.physicsBody.setLinearVelocity(new Vector3(vel.x * 0.985, reboundVy, vel.z * 0.985));
+      bounceEventCooldown = Math.max(bounceEventCooldown, 0.18);
     };
 
     const resetBall = (): void => {
@@ -552,6 +761,7 @@ async function main(): Promise<void> {
       ball.mesh.rotation.set(0, 0, 0);
       ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
       ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
+      resetBallOscillationGuard();
     };
 
     const resetBallForServe = (server: number): void => {
@@ -576,8 +786,7 @@ async function main(): Promise<void> {
       const servingPlayer = server === 0 ? charRoot1 : charRoot2;
       const receivingPlayer = server === 0 ? charRoot2 : charRoot1;
       const serveDirection = server === 0 ? 1 : -1;
-      const serveLineZ = 2.65 * SCALE;
-      const serveBallBuffer = 0.10 * SCALE;
+      const serveLineZ = SERVE_LINE_Z;
       const maxServeX = 2.6 * SCALE;
       const receiveAnticipationDepth = 0.92 * SCALE;
       const receiveAnticipationX = 0.45;
@@ -604,21 +813,37 @@ async function main(): Promise<void> {
         p2Capsule.position.z = charRoot2.position.z;
       }
 
-      const desiredServeBallZ = servingPlayer.position.z + serveDirection * 0.85 * SCALE;
-      const serveBallZ = serverSide === 0
-        ? Math.min(desiredServeBallZ, -serveLineZ - serveBallBuffer)
-        : Math.max(desiredServeBallZ, serveLineZ + serveBallBuffer);
+      const serveLoft = serveConfig ? Math.max(0, Math.min(1, serveConfig.ballLoft)) : 0.4;
+      const handHeight = (0.94 + serveLoft * 0.07) * SCALE;
+      const facing = servingPlayer.rotation.y;
+      const forward = new Vector3(Math.sin(facing), 0, Math.cos(facing));
+      const servingCharacter = serverSide === 0 ? player1 : player2;
+      const handBase = servingCharacter?.getHandControlPosition(hand)
+        ?? servingPlayer.position.add(new Vector3(0, handHeight, 0));
+      const bodyToHand = handBase.subtract(servingPlayer.position);
+      bodyToHand.y = 0;
+      const bodySeparation = bodyToHand.lengthSquared() > 1e-6
+        ? bodyToHand.normalize().scale(0.02 * SCALE)
+        : Vector3.Zero();
+      const frontOffset = forward.scale(0.11 * SCALE);
+      const backOfHandBias = forward.scale(-0.02 * SCALE);
+      const tossAnchor = handBase
+        .add(bodySeparation)
+        .add(frontOffset)
+        .add(backOfHandBias)
+        .add(new Vector3(0, 0.02 * SCALE, 0));
 
       const servePosition = new Vector3(
-        servingPlayer.position.x,
-        1.55 * SCALE,
-        serveBallZ,
+        tossAnchor.x,
+        tossAnchor.y,
+        tossAnchor.z,
       );
 
       ball.mesh.position.copyFrom(servePosition);
       ball.mesh.rotation.set(0, 0, 0);
       ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
       ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
+      resetBallOscillationGuard();
     };
 
     const clearRallyState = (): void => {
@@ -671,6 +896,20 @@ async function main(): Promise<void> {
     };
 
     const restartServeNoPoint = (): void => {
+      if (serveState.active) {
+        const doubleFaultOpponent = matchManager.recordFailedServe(serveState.server);
+        if (doubleFaultOpponent !== null) {
+          // Double fault: point already recorded inside recordFailedServe; just
+          // run the post-point side effects (announcement, reset).
+          pointAnnouncement.announce(doubleFaultOpponent, matchManager.score[doubleFaultOpponent]);
+          syncHud();
+          clearRallyState();
+          if (matchManager.isMatchActive) {
+            resetBallForServe(matchManager.currentServer);
+          }
+          return;
+        }
+      }
       clearRallyState();
       resetBallForServe(matchManager.currentServer);
       syncHud();
@@ -781,55 +1020,89 @@ async function main(): Promise<void> {
       const servingCharacter = serveState.server === 0 ? player1 : player2;
       const strikeDirection = serveState.server === 0 ? 1 : -1;
       const facing = servingPlayer.rotation.y;
-      const right = new Vector3(Math.cos(facing), 0, -Math.sin(facing));
       const forward = new Vector3(Math.sin(facing), 0, Math.cos(facing));
-      const handSign = serveState.hand === 'right' ? 1 : -1;
+      const right = new Vector3(forward.z, 0, -forward.x);
       const serveConfig = getAnimConfigForClip('serve');
       const serveLoft = serveConfig ? Math.max(0, Math.min(1, serveConfig.ballLoft)) : 0.4;
       const serveReachUnits = resolveAnimReachUnits(serveConfig, 1.2);
       const serveReach = Math.max(0.60 * SCALE, Math.min(2.0 * SCALE, serveReachUnits * SCALE));
       const clipLengthFrames = Math.max(1, Math.round(serveConfig?.clipLengthFrames ?? 146));
-      const holdStartFrame = Math.max(0, Math.min(clipLengthFrames, Math.round(serveConfig?.holdWindow?.[0] ?? 4)));
-      const holdEndFrame = Math.max(holdStartFrame, Math.min(clipLengthFrames, Math.round(serveConfig?.holdWindow?.[1] ?? 31)));
-      const contactFrame = Math.max(1, Math.min(clipLengthFrames, Math.round(serveConfig?.contactFrame ?? 62)));
-      const tossFrame = Math.max(holdEndFrame + 1, Math.min(contactFrame, Math.round(serveConfig?.tossFrame ?? 32)));
-      const rawWindowStart = serveConfig?.contactWindow?.[0] ?? Math.max(1, contactFrame - 4);
-      const rawWindowEnd = serveConfig?.contactWindow?.[1] ?? Math.min(clipLengthFrames, contactFrame + 5);
+      const tossFrame = Math.max(1, Math.min(clipLengthFrames, Math.round(serveConfig?.tossFrame ?? 1)));
+      const contactFrame = Math.max(tossFrame + 1, Math.min(clipLengthFrames, Math.round(serveConfig?.contactFrame ?? 55)));
+      const rawWindowStart = serveConfig?.contactWindow?.[0] ?? contactFrame;
+      const rawWindowEnd = serveConfig?.contactWindow?.[1] ?? Math.min(clipLengthFrames, contactFrame + 11);
       const strikeWindowStartFrame = Math.max(0, Math.min(contactFrame, Math.min(rawWindowStart, rawWindowEnd)));
       const strikeWindowEndFrame = Math.max(strikeWindowStartFrame, Math.min(clipLengthFrames, Math.max(rawWindowStart, rawWindowEnd)));
 
-      const handOffset = right.scale(0.22 * handSign).add(forward.scale(0.22 * strikeDirection));
-      const holdHeight = (1.03 + serveLoft * 0.18) * SCALE;
-      const tossStartHeight = holdHeight;
-      const serveHeadContactY = Math.max(1.6 * SCALE, Math.min(2.08 * SCALE, (1.50 + serveReachUnits * 0.24) * SCALE));
-      // Serve timing follows authored keyframes: hold(4-31), toss(32), strike(58-67), contact(62).
-      const frameTimeScale = 0.01;
-      const holdStartTime = holdStartFrame * frameTimeScale;
-      const holdEndTime = holdEndFrame * frameTimeScale;
-      const tossReleaseTime = tossFrame * frameTimeScale;
-      const strikeWindowStartTime = strikeWindowStartFrame * frameTimeScale;
-      const strikeWindowEndTime = strikeWindowEndFrame * frameTimeScale;
-      const contactTime = contactFrame * frameTimeScale;
-      const serveImpactFallback = Math.max(0.03, contactTime - strikeWindowStartTime);
-      const serveStrikeMaxWait = Math.max(strikeWindowEndTime + 0.48, 1.25);
+      const handHeight = (0.94 + serveLoft * 0.07) * SCALE;
+      const handBase = servingCharacter?.getHandControlPosition(serveState.hand)
+        ?? servingPlayer.position.add(new Vector3(0, handHeight, 0));
+      const bodyToHand = handBase.subtract(servingPlayer.position);
+      bodyToHand.y = 0;
+      const bodySeparation = bodyToHand.lengthSquared() > 1e-6
+        ? bodyToHand.normalize().scale(0.02 * SCALE)
+        : Vector3.Zero();
+      const frontOffset = forward.scale(0.11 * SCALE);
+      const backOfHandBias = forward.scale(-0.02 * SCALE);
+      const tossAnchor = handBase
+        .add(bodySeparation)
+        .add(frontOffset)
+        .add(backOfHandBias)
+        .add(new Vector3(0, 0.02 * SCALE, 0));
+      const headControlPos = servingCharacter?.getHeadControlPosition() ?? servingPlayer.position.add(new Vector3(0, 1.72 * SCALE, 0));
+      const headHeightFromGround = Math.max(1.40 * SCALE, headControlPos.y - servingPlayer.position.y);
+      const headContactBase = new Vector3(
+        headControlPos.x,
+        servingPlayer.position.y + headHeightFromGround,
+        headControlPos.z,
+      );
+      const targetApexY = headContactBase.y + ((0.17 + serveLoft * 0.04) * SERVE_TOSS_HEIGHT_MULT) * SCALE;
 
-      const headPos = servingCharacter?.getHeadControlPosition()
-        ?? servingPlayer.position.add(new Vector3(0, serveHeadContactY, 0));
-      const contactAnchor = headPos.add(forward.scale(0.12 * strikeDirection));
-      const timeFromTossToContact = Math.max(0.14, contactTime - tossReleaseTime);
-      const tossOriginY = servingPlayer.position.y + tossStartHeight;
-      const targetContactY = contactAnchor.y + 0.06 * SCALE;
-      const highTossSpeedY = Math.max(
-        3.2 * SCALE,
-        Math.min(
-          8.4 * SCALE,
-          (targetContactY - tossOriginY + 0.5 * gravityAbs * timeFromTossToContact * timeFromTossToContact) / timeFromTossToContact,
-        ),
+      // Keep authored frame order but let apex happen slightly before contact.
+      const frameSpanToContact = Math.max(1, contactFrame - tossFrame);
+      const riseToApex = Math.max(0.10 * SCALE, targetApexY - tossAnchor.y);
+      const timeToApex = Math.max(0.26, Math.min(0.76, Math.sqrt((2 * riseToApex) / gravityAbs)));
+      const preContactFallTime = 0.10;
+      const frameTimeScale = (timeToApex + preContactFallTime) / frameSpanToContact;
+      const frameToTime = (frame: number): number => Math.max(0, (Math.max(tossFrame, frame) - tossFrame) * frameTimeScale);
+      const tossReleaseTime = 0;
+      const strikeWindowStartTime = frameToTime(strikeWindowStartFrame);
+      const strikeWindowEndTime = frameToTime(strikeWindowEndFrame + 1);
+      const contactTime = frameToTime(contactFrame);
+      const timeFromTossToContact = Math.max(0.12, contactTime - tossReleaseTime);
+
+      // Shape toss direction from launch: 15 degrees right and 10 degrees forward relative to vertical.
+      const rightLaunchAngleRad = SERVE_TOSS_RIGHT_ANGLE_DEG * Math.PI / 180;
+      const forwardLaunchAngleRad = SERVE_TOSS_FORWARD_ANGLE_DEG * Math.PI / 180;
+      const launchVerticalSpeed = gravityAbs * timeToApex;
+      const desiredRightOffset = Math.tan(rightLaunchAngleRad) * launchVerticalSpeed * timeFromTossToContact;
+      const desiredForwardOffset = Math.tan(forwardLaunchAngleRad) * launchVerticalSpeed * timeFromTossToContact;
+      const maxRightOffset = SERVE_TOSS_CONTACT_RIGHT_MAX * SCALE;
+      const maxForwardOffset = SERVE_TOSS_CONTACT_FORWARD_MAX * SCALE;
+      const clampedRightOffset = Math.max(-maxRightOffset, Math.min(maxRightOffset, desiredRightOffset));
+      const clampedForwardOffset = Math.max(-maxForwardOffset, Math.min(maxForwardOffset, desiredForwardOffset));
+      const contactAnchor = new Vector3(
+        headContactBase.x + right.x * clampedRightOffset + forward.x * clampedForwardOffset,
+        headContactBase.y,
+        headContactBase.z + right.z * clampedRightOffset + forward.z * clampedForwardOffset,
       );
 
+      const serveBounceTarget = new Vector3(
+        Math.max(-0.65 * TABLE_SCALE, Math.min(0.65 * TABLE_SCALE, servingPlayer.position.x * 0.22)),
+        0.87 * TABLE_SCALE + ballRadius * 0.96,
+        strikeDirection * 0.52 * TABLE_SCALE,
+      );
+      const tossDelta = contactAnchor.subtract(tossAnchor);
+      const tossVelocity = new Vector3(
+        tossDelta.x / timeFromTossToContact,
+        gravityAbs * timeToApex,
+        tossDelta.z / timeFromTossToContact,
+      );
+      tossVelocity.y = Math.max(2.2 * SCALE, Math.min(6.8 * SCALE, tossVelocity.y));
+
       if (serveState.phase === 'ready') {
-        const holdPos = servingPlayer.position.add(handOffset).add(new Vector3(0, holdHeight, 0));
-        ball.mesh.position.copyFrom(holdPos);
+        serveState.timer += deltaTime;
+        ball.mesh.position.copyFrom(tossAnchor);
         ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
         ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
         return;
@@ -837,8 +1110,7 @@ async function main(): Promise<void> {
 
       if (serveState.phase === 'toss') {
         if (serveState.timer <= 0) {
-          const tossStart = servingPlayer.position.add(handOffset).add(new Vector3(0, tossStartHeight, 0));
-          ball.mesh.position.copyFrom(tossStart);
+          ball.mesh.position.copyFrom(tossAnchor);
           ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
           ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
           serveState.tossReleased = false;
@@ -849,106 +1121,108 @@ async function main(): Promise<void> {
           }
         }
 
-        serveState.timer += deltaTime;
-
-        // Keep ball in hand until the configured toss frame is reached.
+        // Keep ball in hand until the configured toss frame; frame 1 releases immediately.
         if (!serveState.tossReleased) {
-          const holdY = serveState.timer >= holdStartTime && serveState.timer <= holdEndTime
-            ? holdHeight
-            : tossStartHeight;
-          const tossHold = servingPlayer.position.add(handOffset).add(new Vector3(0, holdY, 0));
-          ball.mesh.position.copyFrom(tossHold);
+          ball.mesh.position.copyFrom(tossAnchor);
           ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
           ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
 
           if (serveState.timer >= tossReleaseTime) {
-            ball.mesh.physicsBody.setLinearVelocity(new Vector3(0, highTossSpeedY, 0));
+            ball.mesh.physicsBody.setLinearVelocity(tossVelocity);
             serveState.tossReleased = true;
           }
         }
 
-        const tossVelocity = ball.mesh.physicsBody.getLinearVelocity();
-        const descending = tossVelocity.y < -0.05 * SCALE;
+        serveState.timer += deltaTime;
 
-        // Keep the toss near the server laterally so the head strike remains reachable.
-        if (serveState.tossReleased) {
-          const tetherAnchor = contactAnchor.add(new Vector3(0, 0.2 * SCALE, 0));
-          const tetherBlend = Math.max(0, Math.min(1, deltaTime * 8.5));
-          ball.mesh.position.x += (tetherAnchor.x - ball.mesh.position.x) * tetherBlend;
-          ball.mesh.position.z += (tetherAnchor.z - ball.mesh.position.z) * tetherBlend;
-          ball.mesh.physicsBody.setLinearVelocity(new Vector3(
-            tossVelocity.x * 0.35,
-            tossVelocity.y,
-            tossVelocity.z * 0.35,
-          ));
-        }
-
-        const contactWindowY = contactAnchor.y + 0.20 * SCALE;
-        const anchorDx = ball.mesh.position.x - contactAnchor.x;
-        const anchorDz = ball.mesh.position.z - contactAnchor.z;
-        const anchorDist = Math.sqrt(anchorDx * anchorDx + anchorDz * anchorDz);
-
-        const strikeWindowReady =
-          serveState.tossReleased &&
-          serveState.timer >= strikeWindowStartTime &&
-          (anchorDist <= Math.max(0.30 * SCALE, serveReach * 0.55) || ball.mesh.position.y <= contactWindowY + 0.12 * SCALE);
-
-        if (strikeWindowReady || serveState.timer >= serveStrikeMaxWait) {
+        if (serveState.tossReleased && serveState.timer >= contactTime) {
           serveState.phase = 'strike';
           serveState.timer = 0;
           serveState.strikeApplied = false;
+        } else if (serveState.timer >= strikeWindowEndTime + 0.35) {
+          if (PURE_BALL_PHYSICS) {
+            serveState.active = false;
+            serveState.phase = 'ready';
+            serveState.timer = 0;
+          } else {
+            restartServeNoPoint();
+          }
+        }
+        return;
+      }
+
+      if (serveState.phase === 'flight') {
+        serveState.timer += deltaTime;
+        if (serveState.timer >= SERVE_FLIGHT_LOCK_MAX_SECONDS) {
+          if (PURE_BALL_PHYSICS) {
+            serveState.active = false;
+            serveState.phase = 'ready';
+            serveState.timer = 0;
+          } else {
+            restartServeNoPoint();
+          }
         }
         return;
       }
 
       // Strike phase
       serveState.timer += deltaTime;
-      const toHead = ball.mesh.position.subtract(contactAnchor);
+      const strikeHeadControl = servingCharacter?.getHeadControlPosition() ?? contactAnchor;
+      const strikeHeadAnchor = new Vector3(
+        strikeHeadControl.x + forward.x * (0.04 * SCALE * strikeDirection),
+        strikeHeadControl.y + 0.02 * SCALE,
+        strikeHeadControl.z + forward.z * (0.04 * SCALE * strikeDirection),
+      );
+      const toHead = ball.mesh.position.subtract(strikeHeadAnchor);
       const headDist = Math.sqrt(toHead.x * toHead.x + toHead.y * toHead.y + toHead.z * toHead.z);
-      const headStrikeRadius = Math.max(0.44 * SCALE, Math.min(0.86 * SCALE, serveReach * 0.56));
-      const inHeadStrikeZone = headDist <= headStrikeRadius && ball.mesh.position.y >= contactAnchor.y - 0.32 * SCALE;
+      const headStrikeRadius = Math.max(0.34 * SCALE, Math.min(0.72 * SCALE, serveReach * 0.46));
+      const inHeadStrikeZone = headDist <= headStrikeRadius && ball.mesh.position.y >= strikeHeadAnchor.y - 0.30 * SCALE;
+      const strikeVelocity = ball.mesh.physicsBody.getLinearVelocity();
+      const fallingToHead = strikeVelocity.y <= -0.03 * SCALE;
+      const strikeWindowDuration = Math.max(0.06, strikeWindowEndTime - strikeWindowStartTime);
 
-      if (!serveState.strikeApplied && !inHeadStrikeZone && serveState.timer <= serveImpactFallback) {
-        const settleBlend = Math.max(0, Math.min(1, deltaTime * 9.5));
-        ball.mesh.position.x += (contactAnchor.x - ball.mesh.position.x) * settleBlend;
-        ball.mesh.position.z += (contactAnchor.z - ball.mesh.position.z) * settleBlend;
-      }
+      if (!serveState.strikeApplied && inHeadStrikeZone && fallingToHead) {
+        const contactLift = new Vector3(0, 0.03 * SCALE, 0);
+        ball.mesh.position.copyFrom(strikeHeadAnchor.add(contactLift));
 
-      if (!serveState.strikeApplied && (inHeadStrikeZone || serveState.timer >= serveImpactFallback)) {
-        if (!inHeadStrikeZone) {
-          const snap = contactAnchor.add(new Vector3(0, 0.08 * SCALE, 0));
-          ball.mesh.position.copyFrom(snap);
-        }
-
-        const tableTarget = new Vector3(
-          Math.max(-0.65 * SCALE, Math.min(0.65 * SCALE, servingPlayer.position.x * 0.22)),
-          0.92 * SCALE,
-          0,
-        );
         const from = ball.mesh.position.clone();
-        const to = tableTarget.subtract(from);
+        const to = serveBounceTarget.subtract(from);
         const flat = new Vector3(to.x, 0, to.z);
         const dist = Math.max(0.15 * SCALE, flat.length());
         const defaultServeSpeedRaw = (headerKickSpeed * 0.95) / Math.max(1e-4, animConfigBallSpeedScale);
         const resolvedServeSpeedRaw = resolveAnimBallSpeedValue(serveConfig, defaultServeSpeedRaw);
-        const serveSpeed = Math.max(3.2 * SCALE, Math.min(10.8 * SCALE, resolvedServeSpeedRaw * animConfigBallSpeedScale));
+        const serveSpeed = Math.max(
+          3.6 * SCALE,
+          Math.min(11.8 * SCALE, resolvedServeSpeedRaw * animConfigBallSpeedScale * GLOBAL_KICK_VELOCITY_MULTIPLIER),
+        );
         const time = Math.max(0.34, Math.min(0.72, dist / Math.max(0.001, serveSpeed * 0.82)));
         const vxz = dist / time;
         const dir = flat.lengthSquared() > 1e-5 ? flat.normalize() : new Vector3(0, 0, strikeDirection);
         let vy = (to.y + 0.5 * gravityAbs * time * time) / time;
         vy += (serveLoft - 0.25) * 1.6 * SCALE;
-        vy = Math.max(0.95 * SCALE, Math.min(7.8 * SCALE, vy));
+        vy = Math.max(0.18 * SCALE, Math.min(7.8 * SCALE, vy));
 
         ball.mesh.physicsBody.setLinearVelocity(new Vector3(dir.x * vxz, vy, dir.z * vxz));
         addBallSpinTwist(dir.x * 6.0 + strikeDirection * 2.0);
         registerPlayerTouch(serveState.server);
-        serveBounceGrace = 1;
+        serveBounceGrace = 8;
         serveState.strikeApplied = true;
       }
 
-      const serveStrikeTail = Math.max(0.32, (strikeWindowEndTime - strikeWindowStartTime) + 0.26);
-      if (serveState.timer >= serveStrikeTail) {
-        serveState.active = false;
+      if (!serveState.strikeApplied && serveState.timer >= strikeWindowDuration) {
+        if (PURE_BALL_PHYSICS) {
+          serveState.active = false;
+          serveState.phase = 'ready';
+          serveState.timer = 0;
+        } else {
+          restartServeNoPoint();
+        }
+        return;
+      }
+
+      if (serveState.strikeApplied && serveState.timer >= strikeWindowDuration + 0.18) {
+        serveState.phase = 'flight';
+        serveState.timer = 0;
       }
     };
 
@@ -982,22 +1256,22 @@ async function main(): Promise<void> {
       if (ballSide === touchingPlayer) return false;
 
       // Table edge on opponent side -> no point, restart serve.
-      const tableHalfWidth = 0.85 * SCALE;
-      const edgeBand = 0.11 * SCALE;
-      const tableHalfLength = 1.5 * SCALE;
-      const nearTop = ballPos.y <= 1.18 * SCALE;
-      const withinTableLength = Math.abs(ballPos.z) <= tableHalfLength + 0.18 * SCALE;
+      const tableHalfWidth = 0.85 * TABLE_SCALE;
+      const edgeBand = 0.11 * TABLE_SCALE;
+      const tableHalfLength = 1.5 * TABLE_SCALE;
+      const nearTop = ballPos.y <= 1.18 * TABLE_SCALE;
+      const withinTableLength = Math.abs(ballPos.z) <= tableHalfLength + 0.18 * TABLE_SCALE;
       const onEdgeBand = Math.abs(Math.abs(ballPos.x) - tableHalfWidth) <= edgeBand;
       return nearTop && withinTableLength && onEdgeBand;
     };
 
     const isTableSurfaceBounce = (ballPos: Vector3): boolean => {
-      const tableHalfWidth = 0.85 * SCALE;
-      const tableHalfLength = 1.5 * SCALE;
-      const tableTopY = 0.87 * SCALE;
-      const tableTopBand = 0.34 * SCALE;
-      const withinTableX = Math.abs(ballPos.x) <= tableHalfWidth + 0.10 * SCALE;
-      const withinTableZ = Math.abs(ballPos.z) <= tableHalfLength + 0.14 * SCALE;
+      const tableHalfWidth = 0.85 * TABLE_SCALE;
+      const tableHalfLength = 1.5 * TABLE_SCALE;
+      const tableTopY = 0.87 * TABLE_SCALE;
+      const tableTopBand = 0.34 * TABLE_SCALE;
+      const withinTableX = Math.abs(ballPos.x) <= tableHalfWidth + 0.10 * TABLE_SCALE;
+      const withinTableZ = Math.abs(ballPos.z) <= tableHalfLength + 0.14 * TABLE_SCALE;
       const nearTop = Math.abs(ballPos.y - tableTopY) <= tableTopBand;
       return withinTableX && withinTableZ && nearTop;
     };
@@ -1045,6 +1319,14 @@ async function main(): Promise<void> {
       if (bounceSide === touchingPlayer) {
         awardPoint(opponent);
         return;
+      }
+
+      // Serve stays locked through flight; the first legal opponent-side table
+      // bounce transitions into normal rally interaction.
+      if (serveState.active && serveState.phase === 'flight') {
+        serveState.active = false;
+        serveState.phase = 'ready';
+        serveState.timer = 0;
       }
 
       // More than one bounce on the same table side: opponent of that side gets the point.
@@ -1109,7 +1391,7 @@ async function main(): Promise<void> {
       const uprightBounds = root.getHierarchyBoundingVectors(true);
       const uprightSize = uprightBounds.max.subtract(uprightBounds.min);
       const measuredHeight = Math.max(0.001, uprightSize.y);
-      const scale = 1.95 / measuredHeight;
+      const scale = (1.95 * SCALE) / measuredHeight;
 
       root.scaling = new Vector3(scale, scale, scale);
       root.computeWorldMatrix(true);
@@ -1184,7 +1466,7 @@ async function main(): Promise<void> {
     const charNorm = normalizeCharacterRoot(charRoot1, charData1.skeletons[0] ?? null);
     const charScale1 = charNorm.scale;
 
-    player1 = new Character(0, charRoot1, charData1.skeletons[0] ?? null, p1Stats, charData1.animationGroups, PLAYER_MODEL_YAW_OFFSET);
+    player1 = new Character(0, charRoot1, charData1.skeletons[0] ?? null, p1Stats, charData1.animationGroups, PLAYER_MODEL_YAW_OFFSET, neymarAnimData);
     charRoot1.position = new Vector3(0, charNorm.yOffset, -PLAYER_SPAWN_Z);
     charRoot1.rotation = new Vector3(charNorm.tiltX, PLAYER_MODEL_YAW_OFFSET, charNorm.tiltZ);  // faces +Z (toward table)
     placeCharacterSafely(charRoot1, charData1.skeletons[0] ?? null, 0, charNorm.yOffset);
@@ -1206,7 +1488,7 @@ async function main(): Promise<void> {
       { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
     if (p1Capsule.physicsBody?.shape) {
       p1Capsule.physicsBody.shape.filterMembershipMask = COL_PLAYER;
-      p1Capsule.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
+      p1Capsule.physicsBody.shape.filterCollideMask    = COL_WORLD;
     }
 
     // Create player 2  — second independent instantiation of the same container
@@ -1217,11 +1499,16 @@ async function main(): Promise<void> {
     const charRoot2 = charData2.meshes[0];
     charRoot2.scaling = new Vector3(charScale1, charScale1, charScale1);
 
-    player2 = new Character(1, charRoot2, charData2.skeletons[0] ?? null, p2Stats, charData2.animationGroups, PLAYER_MODEL_YAW_OFFSET);
+    player2 = new Character(1, charRoot2, charData2.skeletons[0] ?? null, p2Stats, charData2.animationGroups, PLAYER_MODEL_YAW_OFFSET, neymarAnimData);
     charRoot2.position = new Vector3(0, charNorm.yOffset, PLAYER_SPAWN_Z);
     charRoot2.rotation = new Vector3(charNorm.tiltX, Math.PI + PLAYER_MODEL_YAW_OFFSET, charNorm.tiltZ); // faces -Z (toward table)
     placeCharacterSafely(charRoot2, charData2.skeletons[0] ?? null, 1, charNorm.yOffset);
     applyPlayerDebugMaterial(charRoot2, 'p2DebugMat', new Color3(0.72, 0.74, 0.78));
+
+    // Sample socket-to-ground distances at contact frames for all gameplay
+    // touches so ball placement can use animation-accurate heights.
+    player1.precomputeActionSocketGroundDistances(SOCKET_HEIGHT_CALIBRATION_ACTIONS);
+    player2.precomputeActionSocketGroundDistances(SOCKET_HEIGHT_CALIBRATION_ACTIONS);
 
     // Capsule collider for player 2 — same approach: separate mesh, not animated
     const p2Capsule = MeshBuilder.CreateCapsule('p2Capsule',
@@ -1237,7 +1524,7 @@ async function main(): Promise<void> {
       { mass: 0, restitution: 0.3, friction: 0.8 }, gameScene);
     if (p2Capsule.physicsBody?.shape) {
       p2Capsule.physicsBody.shape.filterMembershipMask = COL_PLAYER;
-      p2Capsule.physicsBody.shape.filterCollideMask    = COL_BALL | COL_WORLD;
+      p2Capsule.physicsBody.shape.filterCollideMask    = COL_WORLD;
     }
 
     type BoneHitbox = {
@@ -1380,6 +1667,9 @@ async function main(): Promise<void> {
     if (loadingScreen) {
       loadingScreen.style.display = 'none';
     }
+
+    // InputManager wraps the shared pressedKeys set and provides consume-once helpers.
+    inputManager = new InputManager(pressedKeys);
 
     // Keyboard controls for ball
     window.addEventListener('keydown', (event) => {
@@ -1641,9 +1931,12 @@ async function main(): Promise<void> {
     const actionScissorFallbackY = 0.62 * SCALE;
     const actionKneeFallbackForward = 0.50 * SCALE;
     const actionScissorFallbackForward = 0.72 * SCALE;
-    const tableTargetY = 0.88 * SCALE; // ball-center height for first contact on table top
+    const actionAnimationSpeedRatio = 1.35;
+    const actionTimingContactTailSeconds = 0.10;
+    const actionTimingMaxDuration = 1.45;
+    const tableTargetY = 0.88 * TABLE_SCALE; // ball-center height for first contact on table top
     const tableTargetXScale = 0.24; // tighter lateral targeting to keep shots on table
-    const tableTargetHalfWidth = 0.72 * SCALE;
+    const tableTargetHalfWidth = 0.72 * TABLE_SCALE;
     const gravityAbs = 9.81;
     const impactWindowGrace = 0.08;
     const antiTunnelBodyRadius = 0.42 * SCALE;
@@ -1651,10 +1944,13 @@ async function main(): Promise<void> {
     const antiTunnelBodyTop = 1.95 * SCALE;
     const antiTunnelPushOut = 0.05 * SCALE;
     const antiTunnelMinReboundY = 2.2 * SCALE;
+    const ENABLE_PLAYER_ANTI_TUNNEL_GUARD = false;
+    const ENABLE_PLAYER_FALLBACK_BODY_VOLUME = false;
+    const ballInteractionOwnerHoldSeconds = 0.12;
     const playerBodyRadius = 0.42 * SCALE;
     const playerBodyBottom = 0.22 * SCALE;
     const playerBodyTop = 1.95 * SCALE;
-    const playerBodyRestitution = 0.58;
+    const playerBodyRestitution = 0.42;
     const playerBodyPush = 0.35 * SCALE;
     const playerDribbleSpeed = 3.8 * SCALE;
     const playerHalfCourtX = 5.4 * SCALE;
@@ -1662,6 +1958,12 @@ async function main(): Promise<void> {
     // Keep player capsules out of the table volume around the center line.
     // 0.85m table half-width + ~0.35m player body radius ~= 1.2m safety split.
     const minCourtSplitZ = 2.35 * SCALE;
+    const ENABLE_BALL_MOTION_ASSIST = ENABLE_BALL_ASSIST && !PURE_BALL_PHYSICS;
+    const ENABLE_POST_KICK_DIRECTION_LOCK = ENABLE_BALL_ASSIST && !PURE_BALL_PHYSICS;
+    const ENABLE_PLAYER_BODY_COLLISION_RESOLUTION = ENABLE_BALL_ASSIST && !PURE_BALL_PHYSICS;
+    const ENABLE_BALL_OSCILLATION_GUARD = ENABLE_BALL_ASSIST && !PURE_BALL_PHYSICS;
+    const ENABLE_DRIBBLE_PUSH = false;
+    const ENABLE_ARCADE_RALLY_SCRIPT = true;
 
     const p1Motion = { vx: 0, vz: 0, facing: 0 };
     const p2Motion = { vx: 0, vz: 0, facing: Math.PI };
@@ -1669,6 +1971,22 @@ async function main(): Promise<void> {
     type TouchPhase = 'defense' | 'reception' | 'preparation' | 'kick';
     type BoxIndex = { x: number; y: number; z: number; key: string };
     type TableCell = { row: number; col: number; center: Vector3; score: number };
+    type ArcadeCurve = {
+      start: Vector3;
+      control: Vector3;
+      end: Vector3;
+      duration: number;
+      elapsed: number;
+    };
+    type ArcadeRallyFlightState = {
+      active: boolean;
+      stage: 'toTable' | 'toReceive';
+      attackerSide: CourtSide;
+      receiverSide: CourtSide;
+      receiveTarget: Vector3;
+      toTable: ArcadeCurve | null;
+      toReceive: ArcadeCurve | null;
+    };
     const p1StrikeState: { action: OffensiveAction | null; timer: number } = {
       action: null,
       timer: 0,
@@ -1721,6 +2039,17 @@ async function main(): Promise<void> {
     const GRID_Z_BANDS = 3;
     const TABLE_ROWS = 2;
     const TABLE_COLS = 3;
+    const BOX_Y_CENTERS = [0.82 * SCALE, 1.35 * SCALE, 2.02 * SCALE, 2.72 * SCALE];
+
+    const arcadeRallyFlight: ArcadeRallyFlightState = {
+      active: false,
+      stage: 'toTable',
+      attackerSide: 0,
+      receiverSide: 1,
+      receiveTarget: new Vector3(0, 1.35 * SCALE, minCourtSplitZ + 0.5 * (playerHalfCourtZ - minCourtSplitZ)),
+      toTable: null,
+      toReceive: null,
+    };
 
     const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
     const clampi = (v: number, min: number, max: number): number => Math.max(min, Math.min(max, v));
@@ -1746,10 +2075,172 @@ async function main(): Promise<void> {
       const band = getHeightBand(pos.y);
       const y = toBandIndex(band);
 
-      const localZ = side === 0 ? (pos.z + minCourtSplitZ) : (playerHalfCourtZ - pos.z);
+      const localZ = side === 0
+        ? (-minCourtSplitZ - pos.z)
+        : (pos.z - minCourtSplitZ);
       const zNorm = clamp01(localZ / Math.max(0.001, playerHalfCourtZ - minCourtSplitZ));
       const z = clampi(Math.floor(zNorm * GRID_Z_BANDS), 0, GRID_Z_BANDS - 1);
       return { x, y, z, key: `${x}-${y}-${z}` };
+    };
+
+    const getBoxCenter = (box: BoxIndex, side: CourtSide): Vector3 => {
+      const laneWidth = (2 * playerHalfCourtX) / GRID_X_BANDS;
+      const x = -playerHalfCourtX + laneWidth * (box.x + 0.5);
+
+      const y = BOX_Y_CENTERS[clampi(box.y, 0, BOX_Y_CENTERS.length - 1)];
+
+      const depthSpan = playerHalfCourtZ - minCourtSplitZ;
+      const depth = depthSpan * ((box.z + 0.5) / GRID_Z_BANDS);
+      const z = side === 0 ? (-minCourtSplitZ - depth) : (minCourtSplitZ + depth);
+      return new Vector3(x, y, z);
+    };
+
+    const buildArcadeCurve = (start: Vector3, end: Vector3, extraPeak: number, duration: number): ArcadeCurve => {
+      const midX = (start.x + end.x) * 0.5;
+      const midZ = (start.z + end.z) * 0.5;
+      const control = new Vector3(
+        midX,
+        Math.max(start.y, end.y) + extraPeak,
+        midZ,
+      );
+      return {
+        start: start.clone(),
+        control,
+        end: end.clone(),
+        duration: Math.max(0.12, duration),
+        elapsed: 0,
+      };
+    };
+
+    const evaluateArcadeCurvePosition = (curve: ArcadeCurve, t: number): Vector3 => {
+      const clampedT = clamp01(t);
+      const omt = 1 - clampedT;
+      return new Vector3(
+        omt * omt * curve.start.x + 2 * omt * clampedT * curve.control.x + clampedT * clampedT * curve.end.x,
+        omt * omt * curve.start.y + 2 * omt * clampedT * curve.control.y + clampedT * clampedT * curve.end.y,
+        omt * omt * curve.start.z + 2 * omt * clampedT * curve.control.z + clampedT * clampedT * curve.end.z,
+      );
+    };
+
+    const evaluateArcadeCurveVelocity = (curve: ArcadeCurve, t: number): Vector3 => {
+      const clampedT = clamp01(t);
+      const omt = 1 - clampedT;
+      const dt = Math.max(1e-4, curve.duration);
+      const dx = (2 * omt * (curve.control.x - curve.start.x) + 2 * clampedT * (curve.end.x - curve.control.x)) / dt;
+      const dy = (2 * omt * (curve.control.y - curve.start.y) + 2 * clampedT * (curve.end.y - curve.control.y)) / dt;
+      const dz = (2 * omt * (curve.control.z - curve.start.z) + 2 * clampedT * (curve.end.z - curve.control.z)) / dt;
+      return new Vector3(dx, dy, dz);
+    };
+
+    const clearArcadeRallyFlight = (): void => {
+      arcadeRallyFlight.active = false;
+      arcadeRallyFlight.toTable = null;
+      arcadeRallyFlight.toReceive = null;
+    };
+
+    const startArcadeRallyFlight = (
+      attackerSide: CourtSide,
+      strikeBand: HeightBand,
+      strikeSpeed: number,
+      tableTarget: Vector3,
+      attackerPos: Vector3,
+      defenderPos: Vector3,
+    ): void => {
+      if (!ENABLE_ARCADE_RALLY_SCRIPT || serveState.active || collisionDrill.enabled) {
+        return;
+      }
+
+      const receiverSide: CourtSide = attackerSide === 0 ? 1 : 0;
+      const start = ball.mesh.position.clone();
+      const tableHit = new Vector3(tableTarget.x, tableTargetY, tableTarget.z);
+
+      const defenderBox = classifyBox(defenderPos, receiverSide);
+      const tableXNorm = clamp01((tableHit.x + playerHalfCourtX) / (2 * playerHalfCourtX));
+      const tableXBand = clampi(Math.round(tableXNorm * (GRID_X_BANDS - 1)), 0, GRID_X_BANDS - 1);
+      const targetBox: BoxIndex = {
+        x: clampi(Math.round(defenderBox.x * 0.35 + tableXBand * 0.65), 0, GRID_X_BANDS - 1),
+        y: strikeBand === 'veryHigh' ? 2 : 1,
+        z: 1,
+        key: '',
+      };
+      targetBox.key = `${targetBox.x}-${targetBox.y}-${targetBox.z}`;
+
+      const receiveTarget = getBoxCenter(targetBox, receiverSide);
+      receiveTarget.x = clampi(receiveTarget.x * 0.72 + defenderPos.x * 0.28, -playerHalfCourtX * 0.92, playerHalfCourtX * 0.92);
+      receiveTarget.z = clampi(
+        receiveTarget.z,
+        receiverSide === 0 ? -playerHalfCourtZ : minCourtSplitZ,
+        receiverSide === 0 ? -minCourtSplitZ : playerHalfCourtZ,
+      );
+
+      const strikeSpeedClamped = Math.max(2.6 * SCALE, Math.min(12.0 * SCALE, strikeSpeed));
+      const distToTable = Vector3.Distance(start, tableHit);
+      const distToReceive = Vector3.Distance(tableHit, receiveTarget);
+      const toTableDuration = Math.max(0.18, Math.min(0.52, distToTable / Math.max(1e-4, strikeSpeedClamped * 1.18)));
+      const toReceiveDuration = Math.max(0.30, Math.min(0.82, distToReceive / Math.max(1e-4, strikeSpeedClamped * 0.82)));
+
+      const firstArcPeak =
+        0.34 * SCALE +
+        (strikeBand === 'veryHigh' ? 0.18 * SCALE : strikeBand === 'high' ? 0.10 * SCALE : 0);
+      const secondArcPeak =
+        0.50 * SCALE +
+        (strikeBand === 'veryHigh' ? 0.20 * SCALE : strikeBand === 'high' ? 0.12 * SCALE : 0);
+
+      arcadeRallyFlight.active = true;
+      arcadeRallyFlight.stage = 'toTable';
+      arcadeRallyFlight.attackerSide = attackerSide;
+      arcadeRallyFlight.receiverSide = receiverSide;
+      arcadeRallyFlight.receiveTarget.copyFrom(receiveTarget);
+      arcadeRallyFlight.toTable = buildArcadeCurve(start, tableHit, firstArcPeak, toTableDuration);
+      arcadeRallyFlight.toReceive = buildArcadeCurve(tableHit, receiveTarget, secondArcPeak, toReceiveDuration);
+
+      bounceEventCooldown = Math.max(bounceEventCooldown, 0.16);
+      postKickLockTimer = 0;
+      postKickLockSpeed = 0;
+    };
+
+    const updateArcadeRallyFlight = (deltaTime: number): void => {
+      if (!ENABLE_ARCADE_RALLY_SCRIPT || !ball?.mesh?.physicsBody) {
+        return;
+      }
+      if (serveState.active || !matchManager.isMatchActive) {
+        if (arcadeRallyFlight.active) {
+          clearArcadeRallyFlight();
+        }
+        return;
+      }
+      if (!arcadeRallyFlight.active) {
+        return;
+      }
+
+      const activeCurve = arcadeRallyFlight.stage === 'toTable'
+        ? arcadeRallyFlight.toTable
+        : arcadeRallyFlight.toReceive;
+      if (!activeCurve) {
+        clearArcadeRallyFlight();
+        return;
+      }
+
+      activeCurve.elapsed = Math.min(activeCurve.duration, activeCurve.elapsed + deltaTime);
+      const t = activeCurve.duration > 0 ? activeCurve.elapsed / activeCurve.duration : 1;
+      const pos = evaluateArcadeCurvePosition(activeCurve, t);
+      const vel = evaluateArcadeCurveVelocity(activeCurve, t);
+
+      ball.mesh.position.copyFrom(pos);
+      ball.mesh.physicsBody.setLinearVelocity(vel);
+      ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
+
+      if (activeCurve.elapsed >= activeCurve.duration - 1e-4) {
+        if (arcadeRallyFlight.stage === 'toTable') {
+          const bounceSide = sideFromZ(activeCurve.end.z);
+          bouncesOnSideSinceLastTouch[bounceSide] += 1;
+          tableBouncesOnSideSinceLastTouch[bounceSide] += 1;
+          bounceEventCooldown = Math.max(bounceEventCooldown, 0.22);
+          arcadeRallyFlight.stage = 'toReceive';
+        } else {
+          clearArcadeRallyFlight();
+        }
+      }
     };
 
     const getTouchPhaseForPlayer = (player: CourtSide): TouchPhase => {
@@ -1763,7 +2254,8 @@ async function main(): Promise<void> {
     const chooseActionForPhase = (phase: TouchPhase, ballBand: HeightBand, playerPos: Vector3): OffensiveAction => {
       const lateralOffset = Math.abs(ball.mesh.position.x - playerPos.x);
       const centerLane = lateralOffset <= 0.42 * SCALE;
-      const superWideLane = lateralOffset >= 1.12 * SCALE;
+      const midLane = lateralOffset > 0.42 * SCALE && lateralOffset <= 1.12 * SCALE;
+      const superWideLane = lateralOffset > 1.12 * SCALE;
 
       if (phase === 'reception') {
         if (ballBand === 'low') return 'receptionToe';
@@ -1776,15 +2268,22 @@ async function main(): Promise<void> {
         return 'prepInnerRight';
       }
 
-      // Kick phase subdivision from the provided clip grouping.
+      // Kick phase subdivision from the provided clip grouping:
+      // mid  -> CloseTableRightFootKick / CloseTableLowHeadKick
+      // high -> HeadKick (center) or SoleRightFootKick (lateral)
+      // veryHigh -> JumpHeadKick (center), HighKickLeftFoot (mid lateral), Bicycle (super lateral)
       if (ballBand === 'low') {
         return 'kickChest';
       }
       if (ballBand === 'mid') {
-        return centerLane ? 'kickCloseRightFoot' : 'kickCloseHead';
+        if (centerLane) return 'kickCloseRightFoot';
+        if (midLane) {
+          return lateralOffset <= 0.82 * SCALE ? 'kickCloseRightFoot' : 'kickCloseHead';
+        }
+        return 'kickCloseHead';
       }
       if (ballBand === 'high') {
-        return superWideLane ? 'kickSoleRight' : 'kickHead';
+        return centerLane ? 'kickHead' : 'kickSoleRight';
       }
       if (centerLane) {
         return 'kickJumpHead';
@@ -1855,12 +2354,12 @@ async function main(): Promise<void> {
 
     const buildTableCells = (attackerSide: CourtSide): TableCell[] => {
       const cells: TableCell[] = [];
-      const rowHalfDepth = 1.5 * SCALE;
-      const colHalfWidth = 0.85 * SCALE;
-      const zNear = attackerSide === 0 ? 0.55 * SCALE : -0.55 * SCALE;
-      const zFar = attackerSide === 0 ? 1.25 * SCALE : -1.25 * SCALE;
+      const rowHalfDepth = 1.5 * TABLE_SCALE;
+      const colHalfWidth = 0.85 * TABLE_SCALE;
+      const zNear = attackerSide === 0 ? 0.55 * TABLE_SCALE : -0.55 * TABLE_SCALE;
+      const zFar = attackerSide === 0 ? 1.25 * TABLE_SCALE : -1.25 * TABLE_SCALE;
       const rows = [zNear, zFar];
-      const cols = [-0.57 * SCALE, 0, 0.57 * SCALE];
+      const cols = [-0.57 * TABLE_SCALE, 0, 0.57 * TABLE_SCALE];
       for (let r = 0; r < TABLE_ROWS; r++) {
         for (let c = 0; c < TABLE_COLS; c++) {
           cells.push({
@@ -1876,6 +2375,14 @@ async function main(): Promise<void> {
         }
       }
       return cells;
+    };
+
+    const chooseAimCell = (attackerSide: CourtSide, aimX: number, aimZ: number): Vector3 => {
+      const cells = buildTableCells(attackerSide);
+      const colIdx = aimX < -0.3 ? 0 : aimX > 0.3 ? 2 : 1;
+      const rowIdx = aimZ < -0.3 ? 0 : 1;
+      const match = cells.find(c => c.col === colIdx && c.row === rowIdx);
+      return match ? match.center : cells[cells.length - 1].center;
     };
 
     const chooseBestTableCell = (
@@ -1921,11 +2428,14 @@ async function main(): Promise<void> {
       player: CourtSide,
       request: ActionRequestState,
       assist: AssistState,
+      character: Character | undefined,
+      strikeState: { action: OffensiveAction | null; timer: number },
       playerPos: Vector3,
       opponentPos: Vector3,
       serveSetupActive: boolean,
     ): void => {
       if (request.action || assist.active || serveSetupActive) return;
+      if (character?.isInStrike() || (strikeState.action !== null && strikeState.timer > 0)) return;
 
       const plan = planInferredAction(player, playerPos, opponentPos);
       if (plan.phase === 'defense' || !plan.reachable) return;
@@ -2007,6 +2517,41 @@ async function main(): Promise<void> {
         flightTimeScale: 1.00,
         verticalVelocityBias: 0.08 * SCALE,
       };
+    };
+
+    const resolveStrikeTiming = (
+      profile: ReturnType<typeof getActionAssistProfile>,
+      animConfig: ReturnType<typeof getAnimConfigForAction>,
+    ): { strikeDuration: number; impactTime: number } => {
+      let strikeDuration = profile.duration;
+      let impactTime = profile.impactTime;
+
+      if (!animConfig) {
+        return { strikeDuration, impactTime };
+      }
+
+      const fps = Math.max(1, ANIM_CONFIG_FPS);
+      const speedRatio = Math.max(0.1, actionAnimationSpeedRatio);
+      const clipLengthFrames = Math.max(
+        1,
+        Math.round(animConfig.clipLengthFrames ?? Math.max(1, animConfig.contactFrame + 1)),
+      );
+      const contactFrame = animConfig.contactWindow
+        ? 0.5 * (animConfig.contactWindow[0] + animConfig.contactWindow[1])
+        : animConfig.contactFrame;
+      const clampedContactFrame = Math.max(0, Math.min(clipLengthFrames, contactFrame));
+      const contactFromStartSec = clampedContactFrame / fps / speedRatio;
+
+      strikeDuration = Math.max(
+        profile.duration,
+        Math.min(actionTimingMaxDuration, contactFromStartSec + actionTimingContactTailSeconds),
+      );
+      impactTime = Math.max(
+        0.02,
+        Math.min(strikeDuration - 0.02, strikeDuration - contactFromStartSec),
+      );
+
+      return { strikeDuration, impactTime };
     };
 
     const applyRealisticBallConvergence = (
@@ -2124,22 +2669,78 @@ async function main(): Promise<void> {
       const physicsBody = ball.mesh.physicsBody;
       const deltaTime = engine.getNativeEngine().getDeltaTime() / 1000;
       let currentVelocity = physicsBody.getLinearVelocity();
+      ballInteractionLockTimer = Math.max(0, ballInteractionLockTimer - deltaTime);
+      if (ballInteractionLockTimer <= 0) {
+        ballInteractionLockSide = null;
+      }
 
       updateBallVisualSpin(deltaTime);
 
       if (
         ball.mesh.position.y > BALL_RESET_HEIGHT ||
+        ball.mesh.position.y < BALL_RESET_MIN_Y ||
         Math.abs(ball.mesh.position.x) > BALL_RESET_X_LIMIT ||
         Math.abs(ball.mesh.position.z) > BALL_RESET_Z_LIMIT
       ) {
-        resetBall();
+        clearArcadeRallyFlight();
+        if (ball.mesh.position.y < BALL_RESET_MIN_Y && matchManager.isMatchActive) {
+          if (PURE_BALL_PHYSICS) {
+            clearRallyState();
+            serveState.active = false;
+            resetBall();
+          } else {
+            if (lastTouchPlayer !== null) {
+              const opponent: CourtSide = lastTouchPlayer === 0 ? 1 : 0;
+              awardPoint(opponent);
+            } else if (serveState.active) {
+              const serverOpponent: CourtSide = serveState.server === 0 ? 1 : 0;
+              awardPoint(serverOpponent);
+            } else {
+              restartServeNoPoint();
+            }
+          }
+        } else {
+          resetBall();
+        }
         currentVelocity = physicsBody.getLinearVelocity();
       }
 
-      if (currentVelocity.y > BALL_MAX_UPWARD_SPEED) {
+      if (ENABLE_ARCADE_RALLY_SCRIPT) {
+        updateArcadeRallyFlight(deltaTime);
+        currentVelocity = physicsBody.getLinearVelocity();
+      }
+
+      if (!PURE_BALL_PHYSICS && currentVelocity.y > BALL_MAX_UPWARD_SPEED) {
         physicsBody.setLinearVelocity(
           new Vector3(currentVelocity.x, BALL_MAX_UPWARD_SPEED, currentVelocity.z)
         );
+        currentVelocity = physicsBody.getLinearVelocity();
+      }
+
+      if (currentVelocity.y < -BALL_MAX_DOWNWARD_SPEED) {
+        physicsBody.setLinearVelocity(
+          new Vector3(currentVelocity.x, -BALL_MAX_DOWNWARD_SPEED, currentVelocity.z)
+        );
+        currentVelocity = physicsBody.getLinearVelocity();
+      }
+
+      applyTableAntiTunnelBounce();
+      currentVelocity = physicsBody.getLinearVelocity();
+
+      // Safety recovery: if we end up with no active serve/rally and the ball
+      // resting on the court, schedule a clean re-serve instead of idling forever.
+      const ballSpeed = currentVelocity.length();
+      const ballGrounded = ball.mesh.position.y <= ballRadius + 0.28 * SCALE;
+      if (
+        !PURE_BALL_PHYSICS &&
+        matchManager.isMatchActive &&
+        !collisionDrill.enabled &&
+        !serveState.active &&
+        lastTouchPlayer === null &&
+        ballGrounded &&
+        ballSpeed <= 1.05 * SCALE
+      ) {
+        restartServeNoPoint();
         currentVelocity = physicsBody.getLinearVelocity();
       }
 
@@ -2149,12 +2750,32 @@ async function main(): Promise<void> {
           previewCharacter.mesh.rotation.y = animationPreviewLockedYaw;
           previewCharacter.mesh.computeWorldMatrix(true);
         }
+        previousBallPosition.copyFrom(ball.mesh.position);
+        previousBallVelocityY = physicsBody.getLinearVelocity().y;
         return;
       }
 
-      if (postKickLockTimer > 0) {
+      if (ENABLE_POST_KICK_DIRECTION_LOCK && postKickLockTimer > 0) {
         postKickLockTimer = Math.max(0, postKickLockTimer - deltaTime);
         const v = physicsBody.getLinearVelocity();
+        const flat = new Vector3(v.x, 0, v.z);
+        const flatSpeed = flat.length();
+        const flatDir = flatSpeed > 1e-5 ? flat.scale(1 / flatSpeed) : Vector3.Zero();
+        const lockAlignment = flatSpeed > 1e-5 ? Vector3.Dot(flatDir, postKickLockDir) : 1;
+        const nearBoundary =
+          Math.abs(ball.mesh.position.x) >= playerHalfCourtX - 0.35 * SCALE ||
+          Math.abs(ball.mesh.position.z) >= playerHalfCourtZ - 0.35 * SCALE;
+
+        // If the ball clearly deflected (or is pressing into outer boundaries),
+        // stop forcing the old kick direction to avoid ping-pong oscillation.
+        if ((flatSpeed > 0.55 * SCALE && lockAlignment < 0.18) || nearBoundary) {
+          postKickLockTimer = 0;
+          postKickLockSpeed = 0;
+        }
+
+        if (postKickLockTimer <= 0) {
+          // no-op: let natural physics continue this frame
+        } else {
         const desired = new Vector3(
           postKickLockDir.x * postKickLockSpeed,
           Math.max(v.y, 0.35 * SCALE),
@@ -2166,39 +2787,87 @@ async function main(): Promise<void> {
           desired.y,
           v.z + (desired.z - v.z) * blend,
         ));
+        }
+      } else if (!ENABLE_POST_KICK_DIRECTION_LOCK) {
+        postKickLockTimer = 0;
+        postKickLockSpeed = 0;
       }
 
       bounceEventCooldown = Math.max(0, bounceEventCooldown - deltaTime);
+      const bounceVelocityY = physicsBody.getLinearVelocity().y;
+      const tableHalfWidthForBounce = 0.85 * TABLE_SCALE;
+      const tableHalfLengthForBounce = 1.5 * TABLE_SCALE;
+      const tableTopYForBounce = 0.87 * TABLE_SCALE;
+      const nearTableImpactZone =
+        Math.abs(ball.mesh.position.x) <= tableHalfWidthForBounce + 0.18 * TABLE_SCALE &&
+        Math.abs(ball.mesh.position.z) <= tableHalfLengthForBounce + 0.22 * TABLE_SCALE &&
+        ball.mesh.position.y <= tableTopYForBounce + ballRadius + 0.12 * TABLE_SCALE;
+      const nearGroundImpactZone = ball.mesh.position.y <= ballRadius + 0.08 * TABLE_SCALE;
       const bounceCandidate =
         bounceEventCooldown <= 0 &&
-        ball.mesh.position.y <= 1.16 * SCALE &&
-        physicsBody.getLinearVelocity().y < -0.55 * SCALE;
+        previousBallVelocityY < -0.45 * SCALE &&
+        bounceVelocityY >= 0.08 * SCALE &&
+        (nearTableImpactZone || nearGroundImpactZone);
       if (bounceCandidate) {
         bounceEventCooldown = 0.22;
-        if (!collisionDrill.enabled) {
+        if (!collisionDrill.enabled && !PURE_BALL_PHYSICS) {
           handleBounceRules();
         }
       }
 
-      // Player 1 controls (WASD + Space)
-      let p1MoveX = 0;
-      let p1MoveZ = 0;
-      if (pressedKeys.has('a')) p1MoveX -= 1;
-      if (pressedKeys.has('d')) p1MoveX += 1;
-      if (pressedKeys.has('w')) p1MoveZ -= 1;
-      if (pressedKeys.has('s')) p1MoveZ += 1;
+      // Player 1 controls (WASD + Space) — routed through InputManager
+      let p1MoveX = inputManager.getMoveX(0);
+      let p1MoveZ = inputManager.getMoveZ(0);
 
-      // Player 2 controls (Arrow Keys + Enter)
-      let p2MoveX = 0;
-      let p2MoveZ = 0;
-      if (pressedKeys.has('arrowleft')) p2MoveX -= 1;
-      if (pressedKeys.has('arrowright')) p2MoveX += 1;
-      if (pressedKeys.has('arrowup')) p2MoveZ -= 1;
-      if (pressedKeys.has('arrowdown')) p2MoveZ += 1;
+      // Player 2 controls (Arrow Keys + Enter) — routed through InputManager
+      let p2MoveX = inputManager.getMoveX(1);
+      let p2MoveZ = inputManager.getMoveZ(1);
+
+      const clampSideZ = (side: CourtSide, z: number): number => {
+        if (side === 0) {
+          return Math.max(-playerHalfCourtZ, Math.min(-minCourtSplitZ, z));
+        }
+        return Math.max(minCourtSplitZ, Math.min(playerHalfCourtZ, z));
+      };
+
+      const getAIDepthPlan = (side: CourtSide): { targetAbsZ: number; followWeight: number } => {
+        const vel = physicsBody.getLinearVelocity();
+        const ballSide = sideFromZ(ball.mesh.position.z);
+        const myPhase = getPlannedPhase(side, ballSide);
+        const opponent: CourtSide = side === 0 ? 1 : 0;
+        const opponentPhase = getPlannedPhase(opponent, ballSide);
+
+        if (myPhase === 'kick') {
+          return { targetAbsZ: AI_FINAL_KICK_TARGET_Z, followWeight: 0.72 };
+        }
+        if (myPhase === 'preparation') {
+          return { targetAbsZ: AI_PREP_STEP_IN_TARGET_Z, followWeight: 0.62 };
+        }
+
+        const horizontalSpeed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
+        const movingTowardMe = side === 0 ? vel.z < -0.04 * SCALE : vel.z > 0.04 * SCALE;
+        const likelyShortIncoming =
+          movingTowardMe &&
+          horizontalSpeed < AI_LOW_SPEED_RETURN_THRESHOLD &&
+          ball.mesh.position.y < 2.2 * SCALE;
+        const opponentLikelySoftKick =
+          ballSide === opponent &&
+          (opponentPhase === 'reception' || opponentPhase === 'preparation') &&
+          horizontalSpeed < AI_LOW_SPEED_RETURN_THRESHOLD * 1.15;
+
+        if (likelyShortIncoming || opponentLikelySoftKick) {
+          return { targetAbsZ: AI_SHORT_RETURN_STEP_IN_Z, followWeight: 0.50 };
+        }
+
+        return { targetAbsZ: AI_BEHIND_SERVE_TARGET_Z, followWeight: 0.18 };
+      };
 
       if (ENABLE_P1_AI && !collisionDrill.enabled) {
         const targetX = Math.max(-playerHalfCourtX, Math.min(playerHalfCourtX, ball.mesh.position.x));
-        const targetZ = Math.max(-playerHalfCourtZ, Math.min(-minCourtSplitZ, ball.mesh.position.z));
+        const depthPlan = getAIDepthPlan(0);
+        const depthAnchorZ = clampSideZ(0, -depthPlan.targetAbsZ);
+        const trackedBallZ = clampSideZ(0, ball.mesh.position.z);
+        const targetZ = depthAnchorZ + (trackedBallZ - depthAnchorZ) * depthPlan.followWeight;
         const dx = targetX - charRoot1.position.x;
         const dz = targetZ - charRoot1.position.z;
         const dead = 0.24 * SCALE;
@@ -2208,7 +2877,10 @@ async function main(): Promise<void> {
 
       if (ENABLE_P2_AI && !collisionDrill.enabled) {
         const targetX = Math.max(-playerHalfCourtX, Math.min(playerHalfCourtX, ball.mesh.position.x));
-        const targetZ = Math.max(minCourtSplitZ, Math.min(playerHalfCourtZ, ball.mesh.position.z));
+        const depthPlan = getAIDepthPlan(1);
+        const depthAnchorZ = clampSideZ(1, depthPlan.targetAbsZ);
+        const trackedBallZ = clampSideZ(1, ball.mesh.position.z);
+        const targetZ = depthAnchorZ + (trackedBallZ - depthAnchorZ) * depthPlan.followWeight;
         const dx = targetX - charRoot2.position.x;
         const dz = targetZ - charRoot2.position.z;
         const dead = 0.24 * SCALE;
@@ -2222,6 +2894,28 @@ async function main(): Promise<void> {
         minZ: number,
         maxZ: number,
       ): { x: number; z: number } => {
+        if (
+          ENABLE_ARCADE_RALLY_SCRIPT &&
+          arcadeRallyFlight.active &&
+          arcadeRallyFlight.stage === 'toReceive' &&
+          arcadeRallyFlight.receiverSide === player
+        ) {
+          const span = Math.max(0.001, maxZ - minZ);
+          const targetX = clampi(arcadeRallyFlight.receiveTarget.x, -playerHalfCourtX, playerHalfCourtX);
+          const targetZ = clampi(arcadeRallyFlight.receiveTarget.z, minZ, maxZ);
+          const dx = targetX - playerPos.x;
+          const dz = targetZ - playerPos.z;
+          const dead = 0.12 * SCALE;
+          const norm = (v: number, range: number): number => {
+            if (Math.abs(v) <= dead) return 0;
+            return Math.max(-1, Math.min(1, v / Math.max(0.001, range)));
+          };
+          return {
+            x: norm(dx, playerHalfCourtX * 0.88),
+            z: norm(dz, span * 0.44),
+          };
+        }
+
         const ballSide = sideFromZ(ball.mesh.position.z);
         if (getPlannedPhase(player, ballSide) !== 'defense') {
           return { x: 0, z: 0 };
@@ -2249,14 +2943,16 @@ async function main(): Promise<void> {
       };
 
       if (!collisionDrill.enabled) {
-        const p1DefenseAdjust = getDefenseAdjustment(0, charRoot1.position, -playerHalfCourtZ, -minCourtSplitZ);
-        if (Math.abs(p1MoveX) < 0.01) {
-          p1MoveX = p1DefenseAdjust.x;
-        }
-        if (Math.abs(p1MoveZ) < 0.01) {
-          p1MoveZ = p1DefenseAdjust.z;
-        } else {
-          p1MoveZ += p1DefenseAdjust.z * 0.25;
+        if (!ENABLE_P1_AI) {
+          const p1DefenseAdjust = getDefenseAdjustment(0, charRoot1.position, -playerHalfCourtZ, -minCourtSplitZ);
+          if (Math.abs(p1MoveX) < 0.01) {
+            p1MoveX = p1DefenseAdjust.x;
+          }
+          if (Math.abs(p1MoveZ) < 0.01) {
+            p1MoveZ = p1DefenseAdjust.z;
+          } else {
+            p1MoveZ += p1DefenseAdjust.z * 0.25;
+          }
         }
 
         if (!ENABLE_P2_AI) {
@@ -2272,8 +2968,15 @@ async function main(): Promise<void> {
         }
       }
 
+      if (serveState.active && !collisionDrill.enabled) {
+        p1MoveX = 0;
+        p1MoveZ = 0;
+        p2MoveX = 0;
+        p2MoveZ = 0;
+      }
+
       const now = Date.now();
-      let serveSetupActive = serveState.active && serveState.phase !== 'strike';
+      let serveSetupActive = serveState.active;
 
       if (collisionDrill.enabled) {
         serveState.active = false;
@@ -2374,8 +3077,9 @@ async function main(): Promise<void> {
       }
 
       if (serveState.active && serveState.phase === 'ready') {
-        const p1ServeTrigger = serveState.server === 0 && (ENABLE_P1_AI || pressedKeys.has('space'));
-        const p2ServeTrigger = serveState.server === 1 && (ENABLE_P2_AI || pressedKeys.has('enter'));
+        const serveCanStart = serveState.timer >= SERVE_READY_PAUSE_SECONDS;
+        const p1ServeTrigger = serveCanStart && serveState.server === 0 && (ENABLE_P1_AI || inputManager.isServeDown(0));
+        const p2ServeTrigger = serveCanStart && serveState.server === 1 && (ENABLE_P2_AI || inputManager.isServeDown(1));
         if (p1ServeTrigger || p2ServeTrigger) {
           serveState.phase = 'toss';
           serveState.timer = 0;
@@ -2398,16 +3102,22 @@ async function main(): Promise<void> {
         physicsBody.setLinearVelocity(new Vector3(vel.x * 0.55, lift, vel.z * 0.55));
       };
 
-      if (!collisionDrill.enabled && !serveSetupActive && pressedKeys.has('space') && now - lastP1LiftPress > setupLiftCooldown) {
+      if (ENABLE_P1_AI && !collisionDrill.enabled && !serveSetupActive && inputManager.isServeDown(0) && now - lastP1LiftPress > setupLiftCooldown) {
         tryLiftBall(charRoot1.position);
         lastP1LiftPress = now;
       }
-      if (!collisionDrill.enabled && !serveSetupActive && pressedKeys.has('enter') && now - lastP2LiftPress > setupLiftCooldown) {
+      if (!collisionDrill.enabled && !serveSetupActive && inputManager.isServeDown(1) && now - lastP2LiftPress > setupLiftCooldown) {
         tryLiftBall(charRoot2.position);
         lastP2LiftPress = now;
       }
 
       const queueInferredKickRequest = (player: CourtSide, request: ActionRequestState): void => {
+        const playerCharacter = player === 0 ? player1 : player2;
+        const playerStrikeState = player === 0 ? p1StrikeState : p2StrikeState;
+        if (playerCharacter?.isInStrike() || (playerStrikeState.action !== null && playerStrikeState.timer > 0)) {
+          return;
+        }
+
         const playerPos = player === 0 ? charRoot1.position : charRoot2.position;
         const opponentPos = player === 0 ? charRoot2.position : charRoot1.position;
         const plan = planInferredAction(player, playerPos, opponentPos);
@@ -2465,13 +3175,7 @@ async function main(): Promise<void> {
 
         if (!character.performAirAction(action, ball.mesh.position)) return;
 
-        const strikeDuration = profile.duration;
-        let impactTime = profile.impactTime;
-        if (animConfig) {
-          const contactRatio = getContactFrameRatio(animConfig, 0.5);
-          const contactFromStartSec = strikeDuration * contactRatio;
-          impactTime = Math.max(0.02, Math.min(strikeDuration, strikeDuration - contactFromStartSec));
-        }
+        const { strikeDuration, impactTime } = resolveStrikeTiming(profile, animConfig);
 
         assist.active = true;
         assist.action = action;
@@ -2491,9 +3195,11 @@ async function main(): Promise<void> {
         strikeState.timer = strikeDuration;
       };
 
-      const p1KickPressed = pressedKeys.has('q');
-      if (!collisionDrill.enabled && !serveSetupActive && now - lastP1ActionPress > actionPressCooldown) {
-        if (ENABLE_P1_AI) {
+      const p1KickPressed = ENABLE_P1_AI ? pressedKeys.has('q') : inputManager.isKickDown(0);
+
+      if (ENABLE_P1_AI) {
+        // AI proximity-based trigger
+        if (!collisionDrill.enabled && !serveSetupActive && now - lastP1ActionPress > actionPressCooldown) {
           const toBall1 = ball.mesh.position.subtract(charRoot1.position);
           const dist1 = Math.sqrt(toBall1.x * toBall1.x + toBall1.z * toBall1.z);
           const vy1 = physicsBody.getLinearVelocity().y;
@@ -2502,20 +3208,62 @@ async function main(): Promise<void> {
             lastP1ActionPress = now;
           }
         }
-      }
+      } else {
+        // Human P1 — hold-to-charge model (release fires the kick)
+        const p1Phase = getPlannedPhase(0, sideFromZ(ball.mesh.position.z));
 
-      if (!collisionDrill.enabled && !ENABLE_P1_AI && !serveSetupActive && p1KickPressed && !p1KickButtonHeld && now - lastP1ActionPress > actionPressCooldown) {
-        const phase = getPlannedPhase(0, sideFromZ(ball.mesh.position.z));
-        const isDoubleTap = now - lastP1KickButtonPress <= DOUBLE_TAP_WINDOW_MS;
-        if (isDoubleTap) {
-          if (phase === 'preparation') pendingPrepSuperHigh[0] = true;
-          if (phase === 'kick') pendingKickPowerBoost[0] = true;
+        // Track grace period: reset when entering kick phase
+        if (p1Phase === 'kick' && p1KickGraceStart < 0) {
+          p1KickGraceStart = now;
+        } else if (p1Phase !== 'kick') {
+          p1KickGraceStart = -1;
         }
-        lastP1KickButtonPress = now;
-        queueInferredKickRequest(0, p1Request);
-        lastP1ActionPress = now;
+
+        if (!collisionDrill.enabled && !serveSetupActive) {
+          // Rising edge: start charge (valid in preparation + kick phase only)
+          if (p1KickPressed && !p1KickButtonHeld && (p1Phase === 'kick' || p1Phase === 'preparation')) {
+            p1KickChargeStart = now;
+            p1KickAim.x = inputManager.getMoveX(0);  // aim snapshot on press
+          }
+
+          // Falling edge: commit kick with accumulated charge
+          if (!p1KickPressed && p1KickButtonHeld && p1KickChargeStart >= 0) {
+            const holdMs = now - p1KickChargeStart;
+            p1KickPowerMult.value = KICK_CHARGE_TABLE.find(([thresh]) => holdMs < thresh)?.[1] ?? 1.75;
+            p1KickAim.x = inputManager.getMoveX(0);  // re-snap aim on release for precision
+            p1KickAim.z = 1;  // always aim deep (up/down does nothing per C1)
+            p1KickChargeStart = -1;
+            if (now - lastP1ActionPress > actionPressCooldown) {
+              queueInferredKickRequest(0, p1Request);
+              lastP1ActionPress = now;
+              p1KickGraceStart = -1;  // player acted — cancel grace auto-kick
+            }
+          }
+
+          // Grace-period auto-kick (C3): fire if player hasn't kicked in time
+          if (p1Phase === 'kick' && p1KickGraceStart >= 0 && now - p1KickGraceStart > P1_KICK_GRACE_MS) {
+            if (now - lastP1ActionPress > actionPressCooldown) {
+              p1KickPowerMult.value = 0.80;  // conservative control-level power
+              p1KickAim.x = 0;
+              p1KickAim.z = 1;
+              p1KickChargeStart = -1;
+              queueInferredKickRequest(0, p1Request);
+              lastP1ActionPress = now;
+            }
+            p1KickGraceStart = -1;
+          }
+        }
       }
       p1KickButtonHeld = p1KickPressed;
+
+      // Update power meter: show only while P1 is actively charging
+      if (!ENABLE_P1_AI) {
+        if (p1KickChargeStart >= 0) {
+          hud.setPowerCharge(Math.min(1, (now - p1KickChargeStart) / 2000));
+        } else {
+          hud.setPowerCharge(null);
+        }
+      }
 
       if (!collisionDrill.enabled && !serveSetupActive && now - lastP2ActionPress > actionPressCooldown) {
         if (ENABLE_P2_AI) {
@@ -2529,7 +3277,7 @@ async function main(): Promise<void> {
         }
       }
 
-      const p2KickPressed = pressedKeys.has('u');
+      const p2KickPressed = inputManager.isKickDown(1);
       if (!collisionDrill.enabled && !ENABLE_P2_AI && !serveSetupActive && p2KickPressed && !p2KickButtonHeld && now - lastP2ActionPress > actionPressCooldown) {
         const phase = getPlannedPhase(1, sideFromZ(ball.mesh.position.z));
         const isDoubleTap = now - lastP2KickButtonPress <= DOUBLE_TAP_WINDOW_MS;
@@ -2545,9 +3293,14 @@ async function main(): Promise<void> {
 
       // Arcade autopilot: if player didn't provide an action input, pick one from
       // touch phase + box classification to keep rallies flowing predictably.
+      // For P1 human, block auto-queue during kick phase — player must press Space.
       if (!collisionDrill.enabled) {
-        queueAutoAction(0, p1Request, p1Assist, charRoot1.position, charRoot2.position, serveSetupActive);
-        queueAutoAction(1, p2Request, p2Assist, charRoot2.position, charRoot1.position, serveSetupActive);
+        const p1BallSide = sideFromZ(ball.mesh.position.z);
+        const p1AutoPhase = getPlannedPhase(0, p1BallSide);
+        if (ENABLE_P1_AI || p1AutoPhase !== 'kick') {
+          queueAutoAction(0, p1Request, p1Assist, player1, p1StrikeState, charRoot1.position, charRoot2.position, serveSetupActive);
+        }
+        queueAutoAction(1, p2Request, p2Assist, player2, p2StrikeState, charRoot2.position, charRoot1.position, serveSetupActive);
       }
 
       const updatePlayer = (
@@ -2719,7 +3472,7 @@ async function main(): Promise<void> {
       stabilizeCharacter(charRoot2, charData2.skeletons[0] ?? null, 1, p2Capsule, p2Motion);
       syncHitboxDebugMeshes();
 
-      if (collisionDrill.enabled && collisionDrill.activeFlight) {
+      if (ENABLE_BALL_MOTION_ASSIST && collisionDrill.enabled && collisionDrill.activeFlight) {
         const side = collisionDrill.side;
         const strikerCharacter = side === 0 ? player1 : player2;
         const strikerRoot = side === 0 ? charRoot1 : charRoot2;
@@ -2814,18 +3567,42 @@ async function main(): Promise<void> {
       p2StrikeState.timer = Math.max(0, p2StrikeState.timer - deltaTime);
       if (p2StrikeState.timer === 0) p2StrikeState.action = null;
 
-      const preventBallTunnelingThroughPlayer = (playerPos: Vector3, assist: AssistState): void => {
-        if (assist.active) return;
+      const getBallInteractionOrder = (): [CourtSide, CourtSide] => {
+        if (collisionDrill.enabled) {
+          return collisionDrill.side === 0 ? [0, 1] : [1, 0];
+        }
+
+        if (ballInteractionLockSide !== null && ballInteractionLockTimer > 0) {
+          return ballInteractionLockSide === 0 ? [0, 1] : [1, 0];
+        }
+
+        const p1Priority = (p1Assist.active ? 2 : 0) + (p1StrikeState.action ? 1 : 0);
+        const p2Priority = (p2Assist.active ? 2 : 0) + (p2StrikeState.action ? 1 : 0);
+        if (p1Priority > p2Priority) return [0, 1];
+        if (p2Priority > p1Priority) return [1, 0];
+
+        const p1DistSq = Vector3.DistanceSquared(charRoot1.position, ball.mesh.position);
+        const p2DistSq = Vector3.DistanceSquared(charRoot2.position, ball.mesh.position);
+        if (Math.abs(p1DistSq - p2DistSq) <= 1e-4) {
+          const ballSide = sideFromZ(ball.mesh.position.z);
+          return ballSide === 0 ? [0, 1] : [1, 0];
+        }
+        return p1DistSq <= p2DistSq ? [0, 1] : [1, 0];
+      };
+
+      const preventBallTunnelingThroughPlayer = (playerPos: Vector3, assist: AssistState): boolean => {
+        if (!ENABLE_PLAYER_ANTI_TUNNEL_GUARD) return false;
+        if (assist.active) return false;
         const vel = physicsBody.getLinearVelocity();
-        if (vel.y >= -0.05) return;
+        if (vel.y >= -0.05) return false;
 
         const toBall = ball.mesh.position.subtract(playerPos);
         const flat = new Vector3(toBall.x, 0, toBall.z);
         const horizontal = flat.length();
         const y = ball.mesh.position.y;
 
-        if (horizontal > antiTunnelBodyRadius + ballRadius) return;
-        if (y < antiTunnelBodyBottom || y > antiTunnelBodyTop) return;
+        if (horizontal > antiTunnelBodyRadius + ballRadius) return false;
+        if (y < antiTunnelBodyBottom || y > antiTunnelBodyTop) return false;
 
         const n = horizontal > 1e-4 ? flat.scale(1 / horizontal) : new Vector3(0, 0, 1);
         const safeDist = antiTunnelBodyRadius + ballRadius + antiTunnelPushOut;
@@ -2838,10 +3615,11 @@ async function main(): Promise<void> {
           reboundY,
           n.z * 1.1 * SCALE,
         ));
+        return true;
       };
 
-      const enforcePlayerBodyCollision = (rig: PlayerHitboxRig, assist: AssistState): void => {
-        if (assist.active) return;
+      const enforcePlayerBodyCollision = (rig: PlayerHitboxRig, assist: AssistState): boolean => {
+        if (assist.active) return false;
 
         let bestContact: { normal: Vector3; penetration: number; restitution: number; part: string } | null = null;
 
@@ -2873,7 +3651,8 @@ async function main(): Promise<void> {
           const vel = physicsBody.getLinearVelocity();
           const vn = Vector3.Dot(vel, bestContact.normal);
           const tangential = vel.subtract(bestContact.normal.scale(vn));
-          const outNormal = vn < 0 ? -vn * bestContact.restitution : vn + 0.10 * SCALE;
+          const outNormalRaw = vn < 0 ? -vn * bestContact.restitution : 0.08 * SCALE;
+          const outNormal = Math.max(0.06 * SCALE, Math.min(5.2 * SCALE, outNormalRaw));
           let nextVel = tangential.scale(0.985).add(bestContact.normal.scale(outNormal));
 
           if (bestContact.part.includes('foot') || bestContact.part.includes('knee')) {
@@ -2881,7 +3660,11 @@ async function main(): Promise<void> {
           }
 
           physicsBody.setLinearVelocity(nextVel);
-          return;
+          return true;
+        }
+
+        if (!ENABLE_PLAYER_FALLBACK_BODY_VOLUME) {
+          return false;
         }
 
         // Fallback body volume for areas not covered by current bone matches.
@@ -2891,8 +3674,8 @@ async function main(): Promise<void> {
         const y = ball.mesh.position.y;
         const combinedRadius = playerBodyRadius + ballRadius;
 
-        if (horizontal >= combinedRadius) return;
-        if (y < playerBodyBottom || y > playerBodyTop) return;
+        if (horizontal >= combinedRadius) return false;
+        if (y < playerBodyBottom || y > playerBodyTop) return false;
 
         const n = horizontal > 1e-4 ? flat.scale(1 / horizontal) : new Vector3(0, 0, 1);
         const penetration = combinedRadius - horizontal;
@@ -2917,18 +3700,60 @@ async function main(): Promise<void> {
           Math.max(vel.y, 0.15 * SCALE),
           nextVz,
         ));
+        return true;
       };
 
-      const p1CollisionActive = !collisionDrill.enabled || collisionDrill.side === 0;
-      const p2CollisionActive = !collisionDrill.enabled || collisionDrill.side === 1;
+      const serveCollisionLocked = serveState.active;
+      const p1CollisionActive = ENABLE_PLAYER_BODY_COLLISION_RESOLUTION && (!collisionDrill.enabled || collisionDrill.side === 0) && !serveCollisionLocked;
+      const p2CollisionActive = ENABLE_PLAYER_BODY_COLLISION_RESOLUTION && (!collisionDrill.enabled || collisionDrill.side === 1) && !serveCollisionLocked;
 
-      if (p1CollisionActive) {
-        preventBallTunnelingThroughPlayer(charRoot1.position, p1Assist);
-        enforcePlayerBodyCollision(p1HitboxRig, p1Assist);
-      }
-      if (p2CollisionActive) {
-        preventBallTunnelingThroughPlayer(charRoot2.position, p2Assist);
-        enforcePlayerBodyCollision(p2HitboxRig, p2Assist);
+      const interactionOrder = getBallInteractionOrder();
+      const getSideInteractionState = (side: CourtSide) => {
+        if (side === 0) {
+          return {
+            active: p1CollisionActive,
+            rootPos: charRoot1.position,
+            assist: p1Assist,
+            rig: p1HitboxRig,
+            character: player1,
+            velocityX: p1Motion.vx,
+            velocityZ: p1Motion.vz,
+            strikeState: p1StrikeState,
+          };
+        }
+        return {
+          active: p2CollisionActive,
+          rootPos: charRoot2.position,
+          assist: p2Assist,
+          rig: p2HitboxRig,
+          character: player2,
+          velocityX: p2Motion.vx,
+          velocityZ: p2Motion.vz,
+          strikeState: p2StrikeState,
+        };
+      };
+
+      let collisionResolved = false;
+      for (const side of interactionOrder) {
+        if (collisionResolved) break;
+        const state = getSideInteractionState(side);
+        if (!state.active) continue;
+
+        const antiTunnelResolved = preventBallTunnelingThroughPlayer(state.rootPos, state.assist);
+        if (antiTunnelResolved) {
+          ballInteractionLockSide = side;
+          ballInteractionLockTimer = ballInteractionOwnerHoldSeconds;
+          collisionResolved = true;
+          break;
+        }
+
+        const bodyResolved = enforcePlayerBodyCollision(state.rig, state.assist);
+        if (bodyResolved) {
+          ballInteractionLockSide = side;
+          ballInteractionLockTimer = ballInteractionOwnerHoldSeconds;
+          collisionResolved = true;
+          break;
+        }
       }
 
       const applyPlayerBallInfluence = (
@@ -2938,30 +3763,41 @@ async function main(): Promise<void> {
         velocityZ: number,
         assist: AssistState,
         strikeState: { action: OffensiveAction | null; timer: number },
-      ): void => {
-        if (serveState.active && serveState.phase !== 'strike') {
-          return;
+        playerSide: CourtSide,
+      ): boolean => {
+        if (serveState.active) {
+          return false;
         }
-        if (!character) return;
+        if (!character) return false;
+        if (ENABLE_ARCADE_RALLY_SCRIPT && arcadeRallyFlight.active) return false;
+        const forwardSign = playerSide === 0 ? 1 : -1;
 
         const toBall = ball.mesh.position.subtract(playerPos);
         const flatToBall = new Vector3(toBall.x, 0, toBall.z);
         const distance = flatToBall.length();
-        if (!assist.active && distance > playerKickRange) return;
+        if (!assist.active && distance > playerKickRange) return false;
 
         const vel = physicsBody.getLinearVelocity();
 
         if (assist.active && strikeState.action && strikeState.timer > 0) {
           const profile = getActionAssistProfile(strikeState.action);
           const inHeightWindow = ball.mesh.position.y >= profile.minHeight && ball.mesh.position.y <= profile.maxHeight;
+          const socketGroundDistanceAtContact = character.getActionSocketGroundDistanceAtContact(strikeState.action);
+          let influenced = false;
 
           // Use strike bone position instead of player root
           const strikePos = character.getStrikeBonePosition();
           const strikeToBall = ball.mesh.position.subtract(strikePos);
           const contactDistance = strikeToBall.length();
 
-          // Assisted pull keeps timing smooth before impact; avoid hard height rejection.
-          if (!assist.hitApplied && inHeightWindow && contactDistance <= profile.magnetRange && contactDistance > 1e-4) {
+          // Optional assist pull (disabled in pure physics mode).
+          if (
+            ENABLE_BALL_MOTION_ASSIST &&
+            !assist.hitApplied &&
+            inHeightWindow &&
+            contactDistance <= profile.magnetRange &&
+            contactDistance > 1e-4
+          ) {
             applyRealisticBallConvergence(
               strikePos,
               profile.magnetRange,
@@ -2970,34 +3806,36 @@ async function main(): Promise<void> {
               0.34,
               deltaTime,
             );
+            influenced = true;
           }
           
           const inImpactWindow = strikeState.timer <= (assist.impactTime + impactWindowGrace);
 
-          // Fallback strike point estimate keeps kicks reliable when skeleton
-          // bone lookup is imperfect for a specific GLB rig.
-          const toBallFlat = new Vector3(toBall.x, 0, toBall.z);
-          const toBallDir = toBallFlat.lengthSquared() > 1e-5
-            ? toBallFlat.normalize()
-            : new Vector3(0, 0, 1);
-          const fallbackStrikePos = playerPos
-            .add(new Vector3(0, profile.fallbackY, 0))
-            .add(toBallDir.scale(profile.fallbackForward));
-          const fallbackDistance = Vector3.Distance(fallbackStrikePos, ball.mesh.position);
-          const effectiveContactDistance = Math.min(contactDistance, fallbackDistance);
-
-          if (!assist.hitApplied && inImpactWindow && effectiveContactDistance > profile.contactDistance) {
-            // Deterministic contact assist: snap ball near strike point right at impact frame.
-            const toBallN = strikeToBall.lengthSquared() > 1e-5
-              ? strikeToBall.normalize()
-              : toBallDir;
-            const snapDist = profile.contactDistance * 0.62;
-            ball.mesh.position.copyFrom(strikePos.add(toBallN.scale(snapDist)));
-          }
+          const effectiveContactDistance = contactDistance;
+          const maxSnapDistance = Math.max(profile.contactDistance * 1.9, profile.magnetRange * 1.2);
 
           if (!assist.hitApplied && inImpactWindow) {
+            if (ENABLE_BALL_MOTION_ASSIST && effectiveContactDistance > maxSnapDistance) {
+              // Ignore impossible contacts instead of teleporting the ball across the court.
+              assist.active = false;
+              assist.action = null;
+              strikeState.action = null;
+              strikeState.timer = 0;
+              return true;
+            }
+
+            if (!ENABLE_BALL_MOTION_ASSIST) {
+              if (!inHeightWindow || effectiveContactDistance > profile.contactDistance) {
+                return influenced;
+              }
+            }
+
             // Hard guarantee: at impact frame, force contact if needed.
-            if (effectiveContactDistance > profile.contactDistance) {
+            if (ENABLE_BALL_MOTION_ASSIST && effectiveContactDistance > profile.contactDistance) {
+              const toBallFlat = new Vector3(toBall.x, 0, toBall.z);
+              const toBallDir = toBallFlat.lengthSquared() > 1e-5
+                ? toBallFlat.normalize()
+                : new Vector3(0, 0, forwardSign);
               const snapN = strikeToBall.lengthSquared() > 1e-5 ? strikeToBall.normalize() : toBallDir;
               const snapDist = profile.contactDistance * 0.55;
               ball.mesh.position.copyFrom(strikePos.add(snapN.scale(snapDist)));
@@ -3013,9 +3851,12 @@ async function main(): Promise<void> {
             const defaultSpeedRaw = strikeSpeed / Math.max(1e-4, animConfigBallSpeedScale);
             const resolvedSpeedRaw = resolveAnimBallSpeedValue(animConfig, defaultSpeedRaw);
             const configSpeed = resolvedSpeedRaw * animConfigBallSpeedScale;
-            strikeSpeed = Math.max(2.8 * SCALE, Math.min(12.5 * SCALE, configSpeed));
+            strikeSpeed = Math.max(
+              2.8 * SCALE,
+              Math.min(12.5 * SCALE, configSpeed * GLOBAL_KICK_VELOCITY_MULTIPLIER),
+            );
 
-            const attackerSide: CourtSide = playerPos.z < 0 ? 0 : 1;
+            const attackerSide: CourtSide = playerSide;
             const defenderPos = attackerSide === 0 ? charRoot2.position : charRoot1.position;
             const touchPhase = getTouchPhaseForPlayer(attackerSide);
             const band = getHeightBand(ball.mesh.position.y);
@@ -3034,7 +3875,8 @@ async function main(): Promise<void> {
             const isControlTouch = touchPhase === 'reception' || touchPhase === 'preparation';
             if (isControlTouch) {
               const contactRatio = getContactFrameRatio(animConfig, 0.5);
-              const baseControlHeight = touchPhase === 'preparation' ? 1.45 * SCALE : 1.18 * SCALE;
+              const fallbackControlHeight = touchPhase === 'preparation' ? 1.45 * SCALE : 1.18 * SCALE;
+              const baseControlHeight = socketGroundDistanceAtContact ?? fallbackControlHeight;
               const loft = animConfig ? Math.max(0, Math.min(1, animConfig.ballLoft)) : 0.5;
               const controlHeight = Math.max(
                 0.9 * SCALE,
@@ -3089,7 +3931,16 @@ async function main(): Promise<void> {
               strikeState.action = null;
               strikeState.timer = 0;
               registerPlayerTouch(attackerSide);
-              return;
+              return true;
+            }
+
+            if (socketGroundDistanceAtContact !== null) {
+              const targetImpactY = Math.max(0.35 * SCALE, Math.min(2.9 * SCALE, socketGroundDistanceAtContact));
+              const maxAdjust = 0.42 * SCALE;
+              const yDelta = targetImpactY - ball.mesh.position.y;
+              if (Math.abs(yDelta) > 1e-4) {
+                ball.mesh.position.y += Math.max(-maxAdjust, Math.min(maxAdjust, yDelta));
+              }
             }
 
             // In collision drill, keep returns local to the active player side.
@@ -3105,7 +3956,9 @@ async function main(): Promise<void> {
                     ),
                   ),
                 )
-              : chooseBestTableCell(
+              : (attackerSide === 0 && !ENABLE_P1_AI && touchPhase === 'kick')
+                ? chooseAimCell(attackerSide, p1KickAim.x, p1KickAim.z)
+                : chooseBestTableCell(
                   attackerSide,
                   playerPos,
                   defenderPos,
@@ -3121,7 +3974,7 @@ async function main(): Promise<void> {
             const distToTable = Math.max(0.12 * SCALE, flatToTable.length());
             const flatDir = flatToTable.lengthSquared() > 1e-5
               ? flatToTable.normalize()
-              : new Vector3(0, 0, playerPos.z < 0 ? 1 : -1);
+              : new Vector3(0, 0, forwardSign);
 
             const timeToTable = Math.max(0.30, Math.min(0.70, (distToTable / Math.max(0.01, strikeSpeed * 0.82)) * strikeProfile.flightTimeScale));
             const horizontalSpeedBase = distToTable / Math.max(0.12, timeToTable);
@@ -3155,24 +4008,40 @@ async function main(): Promise<void> {
             );
             addBallSpinTwist(flatDir.x * 7.5 + (strikeFamily === 'scissor' ? 3.5 : 1.8));
 
-            postKickLockTimer = collisionDrill.enabled ? 0.18 : 0.45;
-            postKickLockSpeed = horizontalSpeed;
-            postKickLockDir = flatDir.clone();
+            if (ENABLE_POST_KICK_DIRECTION_LOCK) {
+              postKickLockTimer = collisionDrill.enabled ? 0.18 : 0.45;
+              postKickLockSpeed = horizontalSpeed;
+              postKickLockDir = flatDir.clone();
+            } else {
+              postKickLockTimer = 0;
+              postKickLockSpeed = 0;
+            }
 
             assist.hitApplied = true;
             assist.active = false;
             assist.action = null;
             strikeState.action = null;
             strikeState.timer = 0;
-            registerPlayerTouch(playerPos.z < 0 ? 0 : 1);
+            registerPlayerTouch(playerSide);
+            if (ENABLE_ARCADE_RALLY_SCRIPT && !collisionDrill.enabled) {
+              startArcadeRallyFlight(
+                attackerSide,
+                band,
+                strikeSpeed,
+                tableTarget,
+                playerPos,
+                defenderPos,
+              );
+            }
+            return true;
           }
-          return;
+          return influenced;
         }
 
-        if (postKickLockTimer <= 0 && distance <= playerPushRange) {
+        if (ENABLE_DRIBBLE_PUSH && postKickLockTimer <= 0 && distance <= playerPushRange) {
           const moveSpeed = Math.sqrt(velocityX ** 2 + velocityZ ** 2);
           if (moveSpeed <= 0.1) {
-            return;
+            return false;
           }
           const moveDir = new Vector3(velocityX, 0, velocityZ).normalize();
           const groundedFactor = ball.mesh.position.y <= ballRadius + 0.2 ? 1 : 0.35;
@@ -3185,23 +4054,118 @@ async function main(): Promise<void> {
               vel.z + (target.z - vel.z) * blend,
             )
           );
-          registerPlayerTouch(playerPos.z < 0 ? 0 : 1);
+          registerPlayerTouch(playerSide);
+          return true;
         }
+
+        return false;
       };
 
-      applyPlayerBallInfluence(player1, charRoot1.position, p1Motion.vx, p1Motion.vz, p1Assist, p1StrikeState);
-      applyPlayerBallInfluence(player2, charRoot2.position, p2Motion.vx, p2Motion.vz, p2Assist, p2StrikeState);
-
-      // Cap horizontal velocity
-      const maxHorizontalSpeed = 8 * SCALE;
-      const cappedVelocity = physicsBody.getLinearVelocity();
-      const horizontalSpeed = Math.sqrt(cappedVelocity.x ** 2 + cappedVelocity.z ** 2);
-      if (horizontalSpeed > maxHorizontalSpeed) {
-        const scale = maxHorizontalSpeed / horizontalSpeed;
-        physicsBody.setLinearVelocity(
-          new Vector3(cappedVelocity.x * scale, cappedVelocity.y, cappedVelocity.z * scale)
+      let influenceApplied = false;
+      for (const side of interactionOrder) {
+        if (influenceApplied) break;
+        const state = getSideInteractionState(side);
+        const influenced = applyPlayerBallInfluence(
+          state.character,
+          state.rootPos,
+          state.velocityX,
+          state.velocityZ,
+          state.assist,
+          state.strikeState,
+          side,
         );
+        if (influenced) {
+          influenceApplied = true;
+          ballInteractionLockSide = side;
+          ballInteractionLockTimer = ballInteractionOwnerHoldSeconds;
+        }
       }
+
+      if (!PURE_BALL_PHYSICS) {
+        // Cap horizontal velocity
+        const maxHorizontalSpeed = 8 * SCALE;
+        const cappedVelocity = physicsBody.getLinearVelocity();
+        const horizontalSpeed = Math.sqrt(cappedVelocity.x ** 2 + cappedVelocity.z ** 2);
+        if (horizontalSpeed > maxHorizontalSpeed) {
+          const scale = maxHorizontalSpeed / horizontalSpeed;
+          physicsBody.setLinearVelocity(
+            new Vector3(cappedVelocity.x * scale, cappedVelocity.y, cappedVelocity.z * scale)
+          );
+        }
+      }
+
+      if (ENABLE_BALL_OSCILLATION_GUARD) {
+        // Anti ping-pong guard: detect rapid horizontal direction flips with almost
+        // no displacement and damp/pop the ball out of opposing-plane oscillation.
+        const oscillationVelocity = physicsBody.getLinearVelocity();
+        const stepDx = ball.mesh.position.x - oscillationPrevPosition.x;
+        const stepDz = ball.mesh.position.z - oscillationPrevPosition.z;
+        const stepTravel = Math.sqrt(stepDx * stepDx + stepDz * stepDz);
+        const flipX =
+          oscillationPrevVelocity.x * oscillationVelocity.x < -0.01 &&
+          Math.abs(oscillationPrevVelocity.x) >= ballOscillationMinFlipSpeed &&
+          Math.abs(oscillationVelocity.x) >= ballOscillationMinFlipSpeed &&
+          stepTravel <= ballOscillationMaxTravelPerFrame;
+        const flipZ =
+          oscillationPrevVelocity.z * oscillationVelocity.z < -0.01 &&
+          Math.abs(oscillationPrevVelocity.z) >= ballOscillationMinFlipSpeed &&
+          Math.abs(oscillationVelocity.z) >= ballOscillationMinFlipSpeed &&
+          stepTravel <= ballOscillationMaxTravelPerFrame;
+
+        oscillationWindowTimer = Math.max(0, oscillationWindowTimer - deltaTime);
+        if (flipX || flipZ) {
+          if (oscillationWindowTimer <= 0) {
+            oscillationFlipCountX = 0;
+            oscillationFlipCountZ = 0;
+          }
+          oscillationWindowTimer = ballOscillationWindow;
+          if (flipX) oscillationFlipCountX += 1;
+          if (flipZ) oscillationFlipCountZ += 1;
+        } else if (oscillationWindowTimer <= 0) {
+          oscillationFlipCountX = 0;
+          oscillationFlipCountZ = 0;
+        }
+
+        const oscillatingX = oscillationFlipCountX >= ballOscillationFlipThreshold;
+        const oscillatingZ = oscillationFlipCountZ >= ballOscillationFlipThreshold;
+        if (oscillatingX || oscillatingZ) {
+          const dampedVelocity = new Vector3(
+            oscillatingX ? oscillationVelocity.x * ballOscillationDampFactor : oscillationVelocity.x,
+            Math.max(oscillationVelocity.y, ballOscillationPopY),
+            oscillatingZ ? oscillationVelocity.z * ballOscillationDampFactor : oscillationVelocity.z,
+          );
+          physicsBody.setLinearVelocity(dampedVelocity);
+          postKickLockTimer = 0;
+          postKickLockSpeed = 0;
+
+          const p1DistSq = Vector3.DistanceSquared(ball.mesh.position, charRoot1.position);
+          const p2DistSq = Vector3.DistanceSquared(ball.mesh.position, charRoot2.position);
+          const nearestPlayerPos = p1DistSq <= p2DistSq ? charRoot1.position : charRoot2.position;
+          const awayFromPlayer = ball.mesh.position.subtract(nearestPlayerPos);
+          awayFromPlayer.y = 0;
+          let awayNormal = Vector3.Zero();
+          const awayLenSq = awayFromPlayer.lengthSquared();
+          if (awayLenSq > 1e-6) {
+            awayNormal = awayFromPlayer.scale(1 / Math.sqrt(awayLenSq));
+          } else if (oscillatingX) {
+            awayNormal = new Vector3(Math.sign(dampedVelocity.x) || 1, 0, 0);
+          } else {
+            awayNormal = new Vector3(0, 0, Math.sign(dampedVelocity.z) || 1);
+          }
+          ball.mesh.position.addInPlace(new Vector3(
+            awayNormal.x * ballOscillationNudge,
+            0.06 * SCALE,
+            awayNormal.z * ballOscillationNudge,
+          ));
+
+          oscillationWindowTimer = 0;
+          oscillationFlipCountX = 0;
+          oscillationFlipCountZ = 0;
+        }
+      }
+
+      oscillationPrevVelocity.copyFrom(physicsBody.getLinearVelocity());
+      oscillationPrevPosition.copyFrom(ball.mesh.position);
 
       // Drive both player animations from their own controls.
       // Convert world-space velocity to local-space relative to facing direction (toward ball)
@@ -3272,6 +4236,10 @@ async function main(): Promise<void> {
         cameraBaseTarget.z + desiredOffsetZ,
       );
       camera.target = Vector3.Lerp(camera.target, desiredTarget, cameraFollowStrength);
+
+      // Track previous-frame vertical velocity so bounce checks only trigger on real rebounds.
+      previousBallPosition.copyFrom(ball.mesh.position);
+      previousBallVelocityY = physicsBody.getLinearVelocity().y;
     });
 
     // Start render loop

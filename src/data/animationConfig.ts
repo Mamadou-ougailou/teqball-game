@@ -24,7 +24,7 @@ export const SPEED_PRESET = {
   SUPER_HIGH: 980,
 } as const;
 
-const GLOBAL_STARTUP_TRIM_FRAMES = 2;
+const GLOBAL_STARTUP_TRIM_FRAMES = 3;
 
 const shiftFrameValue = (frame: number | undefined, trim: number, min = 0): number | undefined => {
   if (frame === undefined) return undefined;
@@ -127,10 +127,10 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
   },
   serve: {
     clipLengthFrames: 146,
-    holdWindow: [4, 31],
-    tossFrame: 32,
-    contactFrame: 62,
-    contactWindow: [58, 67],
+    holdWindow: [4, 4],
+    tossFrame: 4,
+    contactFrame: 58,
+    contactWindow: [58, 71],
     serveHand: 'left',
     activeBone: 'HeadSocket',
     reach: 1.2,

@@ -107,6 +107,11 @@ export const PLAYER_ANIM = Object.fromEntries(
 
 export type PlayerAnimKey = keyof typeof PLAYER_ANIM_NAMES;
 
+export interface CharacterAnimData {
+  keyMap?: Record<string, string>;   // logical key → clip name fragment
+  indexMap?: Record<string, number>; // logical key → exact clip index (overrides keyMap lookup)
+}
+
 const PLAYER_ANIM_ORDER: PlayerAnimKey[] = [
   'idle',
   'jogForward',
@@ -244,7 +249,7 @@ export class AnimationSystem {
     }
   }
 
-  constructor(groups: AnimationGroup[]) {
+  constructor(groups: AnimationGroup[], charData?: CharacterAnimData) {
     this._clips = groups;
     // Stop every group (Babylon auto-starts the first one on load)
     groups.forEach((g, i) => {
@@ -253,9 +258,10 @@ export class AnimationSystem {
     });
 
     // Build a robust logical-key -> clip index mapping from GLB clip names.
+    const keyMapSource = charData?.keyMap ?? PLAYER_ANIM_NAMES;
     let mappedCount = 0;
-    for (const key of Object.keys(PLAYER_ANIM_NAMES)) {
-      const preferred = PLAYER_ANIM_NAMES[key]?.toLowerCase();
+    for (const key of Object.keys(keyMapSource)) {
+      const preferred = keyMapSource[key]?.toLowerCase();
       const aliases = PLAYER_ANIM_ALIASES[key] ?? [];
       const candidates = preferred ? [preferred, ...aliases] : aliases;
       const idx = this._findBestClipIndex(
@@ -285,11 +291,15 @@ export class AnimationSystem {
       }
     }
 
-    if (this._looksLikeNeymarTrackSet()) {
-      for (const [key, idx] of Object.entries(NEYMAR_EXACT_INDEX_MAP) as Array<[PlayerAnimKey, number]>) {
-        if (idx >= 0 && idx < this._clips.length) {
+    // Apply exact index overrides: prefer charData.indexMap, fall back to
+    // the hardcoded Neymar map when the clip set is auto-detected as Neymar.
+    const indexMapSource = charData?.indexMap ?? (this._looksLikeNeymarTrackSet() ? NEYMAR_EXACT_INDEX_MAP : null);
+    if (indexMapSource) {
+      const label = charData?.indexMap ? 'char' : 'neymar';
+      for (const [key, idx] of Object.entries(indexMapSource)) {
+        if (idx !== undefined && idx >= 0 && idx < this._clips.length) {
           this._indexByKey.set(key, idx);
-          console.log(`[AnimationSystem] neymar map "${key}" -> clip[${idx}] "${this._clips[idx].name}"`);
+          console.log(`[AnimationSystem] ${label} map "${key}" -> clip[${idx}] "${this._clips[idx].name}"`);
         }
       }
     }
@@ -348,6 +358,24 @@ export class AnimationSystem {
 
   get activeIndex(): number { return this._activeIndex; }
 
+  getClipByIndex(index: number): AnimationGroup | null {
+    if (index < 0 || index >= this._clips.length) return null;
+    return this._clips[index];
+  }
+
+  getClipByKey(keyOrIndex: PlayerAnimKey | string | number): AnimationGroup | null {
+    const index = this._resolve(keyOrIndex);
+    if (index < 0 || index >= this._clips.length) return null;
+    return this._clips[index];
+  }
+
+  /** Returns the GLB clip name for a given logical key, or null if unmapped. */
+  getClipNameForKey(key: string): string | null {
+    const idx = this._indexByKey.get(key);
+    if (idx === undefined || idx < 0 || idx >= this._clips.length) return null;
+    return this._clips[idx].name;
+  }
+
   hasClip(keyOrIndex: PlayerAnimKey | string | number): boolean {
     const index = this._resolve(keyOrIndex);
     return index >= 0 && index < this._clips.length;
@@ -384,6 +412,7 @@ export class AnimationSystem {
     speedRatio = 1.0,
     onEnd?: () => void,
     startFrameOffset = 0,
+    thenStartFrameOffset = 0,
   ): void {
     const index = this._resolve(keyOrIndex);
     if (index < 0 || index >= this._clips.length) return;
@@ -395,7 +424,7 @@ export class AnimationSystem {
 
     clip.onAnimationGroupEndObservable.addOnce(() => {
       onEnd?.();
-      this.play(thenPlay);
+      this.play(thenPlay, true, 1.0, thenStartFrameOffset);
     });
 
     const safeOffset = Number.isFinite(startFrameOffset) ? Math.max(0, startFrameOffset) : 0;
@@ -413,8 +442,9 @@ export class AnimationSystem {
     speedRatio = 1.0,
     onEnd?: () => void,
     startFrameOffset = 0,
+    thenStartFrameOffset = 0,
   ): void {
-    this.playOnce(index, thenPlay, speedRatio, onEnd, startFrameOffset);
+    this.playOnce(index, thenPlay, speedRatio, onEnd, startFrameOffset, thenStartFrameOffset);
   }
 
   stop(): void {
