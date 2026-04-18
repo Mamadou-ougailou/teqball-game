@@ -1,72 +1,109 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/teqball-icon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Surrealistic Teqball - 3D Web Game</title>
-    <style>
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/teqball-icon.svg" />
+<title>TEQBALL — Surrealistic</title>
+<link rel="stylesheet" href="/src/landing.css" />
+</head>
+<body>
 
-      html,
-      body {
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: #000;
-      }
+<div id="cursor"></div>
+<div id="cursor-ring"></div>
 
-      #renderCanvas {
-        width: 100%;
-        height: 100%;
-        display: block;
-        touch-action: none;
-      }
+<div id="transition">
+  <div id="transition-text">LOADING</div>
+</div>
 
-      #loading-screen {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: #0a0a0a;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        z-index: 1000;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        color: #fff;
-      }
+<!-- ── LANDING PAGE ── -->
+<div id="app">
 
-      .spinner {
-        width: 50px;
-        height: 50px;
-        border: 4px solid rgba(255, 255, 255, 0.1);
-        border-top-color: #00d4ff;
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        margin-bottom: 20px;
-      }
+  <!-- VIDEO PANEL -->
+  <div id="video-panel">
+    <div class="video-slots">
 
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <canvas id="renderCanvas"></canvas>
-    <div id="loading-screen">
-      <div class="spinner"></div>
-      <p>Initializing Surrealistic Teqball...</p>
+      <div class="video-slot" id="slot-arena">
+        <canvas id="canvas-arena"></canvas>
+        <div class="slot-label">Arènes surréalistes</div>
+        <div class="slot-tag">Preview</div>
+      </div>
+
+      <div class="video-slot" id="slot-char">
+        <canvas id="canvas-char"></canvas>
+        <div class="slot-label">Personnages & Superpouvoirsm</div>
+        <div class="slot-tag">Preview</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- MENU PANEL -->
+  <div id="menu-panel">
+
+    <div class="logo-block">
+      <div class="logo-eyebrow">Babylonjs · Web Game</div>
+      <div class="logo-title">
+        Teqball
+        <span>Surrealistic Edition</span>
+      </div>
     </div>
 
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+    <nav>
+      <ul class="nav-list">
+        <li class="nav-item">
+          <button class="nav-btn primary" data-action="play" id="btn-play">
+            <span class="nav-num">01</span>
+            Jouer
+            <span class="nav-arrow">→</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-btn" data-action="characters">
+            <span class="nav-num">02</span>
+            Personnages
+            <span class="nav-arrow">→</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-btn" data-action="arenas">
+            <span class="nav-num">03</span>
+            Arènes
+            <span class="nav-arrow">→</span>
+          </button>
+        </li>
+        <li class="nav-item">
+          <button class="nav-btn" data-action="settings">
+            <span class="nav-num">04</span>
+            Paramètres
+            <span class="nav-arrow">→</span>
+          </button>
+        </li>
+      </ul>
+    </nav>
+
+    <div class="bottom-bar">
+      <div class="version-tag">v1.0.0 — MVP Build</div>
+      <div class="controls-hint">
+        <kbd>W A S D</kbd> / <kbd>↑ ← ↓ →</kbd> Mouvement<br>
+        <kbd>F</kbd> / <kbd>L</kbd> Tir &nbsp;&nbsp; <kbd>G</kbd> / <kbd>;</kbd> Superpower
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- ── GAME SCREEN (hidden until Play) ── -->
+<div id="game-screen">
+  <canvas id="renderCanvas"></canvas>
+  <div id="loading-screen">
+    <div class="loading-spinner"></div>
+    <p>Initializing Surrealistic Teqball...</p>
+  </div>
+  <button class="back-btn" id="back-btn">← Menu</button>
+</div>
+
+<script src="/src/landing.js"></script>
+</body>
 </html>

@@ -25,6 +25,9 @@
 
 import { BabylonEngine } from './core/Engine';
 import { AssetManager } from './core/AssetManager';
+import { EventBus } from './core/EventBus';
+import { UIManager } from './ui/UIManager';
+import type { PointScoredEvent } from './ui/HUD';
 import { Scene } from '@babylonjs/core/scene';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
@@ -38,8 +41,6 @@ import { Character } from './entities/Character';
 import { TeqballTable } from './entities/TeqballTable';
 import { CharacterStats } from './core/interfaces';
 import { MatchManager } from './gameplay/MatchManager';
-import { HUD } from './ui/HUD';
-import { PointAnnouncement } from './ui/PointAnnouncement';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import HavokPhysics from '@babylonjs/havok';
 import { HavokPlugin } from '@babylonjs/core/Physics/v2/Plugins/havokPlugin';
@@ -65,11 +66,10 @@ let ball: Ball;
 let player1: Character;
 let player2: Character;
 let matchManager: MatchManager;
-let hud: HUD;
-let pointAnnouncement: PointAnnouncement;
 let inputManager: InputManager;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let table: TeqballTable;
+let uiManager: UIManager | undefined;
 const pressedKeys = new Set<string>();
 const controlKeys = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's', 'space']);
 controlKeys.add('enter');
@@ -205,7 +205,7 @@ const serveState: ServeState = {
   hand: 'left',
 };
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   try {
     // Get canvas
     const canvasElement = document.getElementById('renderCanvas');
@@ -310,6 +310,7 @@ async function main(): Promise<void> {
       { mass: 0, restitution: WORLD_BOUNCE_RESTITUTION, friction: 0.4 },
       gameScene
     );
+    courtFloor.isVisible = false; // visual replaced by bleachers.glb
     if (courtFloorCollider.physicsBody?.shape) {
       courtFloorCollider.physicsBody.shape.filterMembershipMask = COL_WORLD;
       courtFloorCollider.physicsBody.shape.filterCollideMask    = COL_BALL | COL_PLAYER;
@@ -431,8 +432,7 @@ async function main(): Promise<void> {
     // Initialize asset manager
     assetManager = new AssetManager(gameScene);
     matchManager = new MatchManager();
-    hud = new HUD();
-    pointAnnouncement = new PointAnnouncement();
+    // HUD and PointAnnouncement are created by UIManager (BabylonJS GUI layer).
 
     // Show loading progress
     const loadingScreen = document.getElementById('loading-screen');
@@ -528,8 +528,19 @@ async function main(): Promise<void> {
       }
     }
 
+    // Hide the table.glb visual — bleachers.glb provides the Teqboard visual.
+    // Physics bodies on these meshes stay active for ball collisions.
+    tableData.meshes.forEach((mesh) => { mesh.isVisible = false; });
+
+    // ── Load bleachers.glb (stands + playing surface + Teqboard visual) ──────
+    const bleachersData = await assetManager.loadModel('bleachers');
+    if (bleachersData.meshes.length > 0) {
+      bleachersData.meshes[0].position = Vector3.Zero();
+    }
+
     // Fully procedural ball (visual + physics) to avoid GLB hierarchy issues
     // during serve toss and strike contact windows.
+
     const desiredDiameter = 0.22 * SCALE;
     const ballRadius = desiredDiameter / 2;
     const BALL_VISUAL_SPIN_MAX = 26.0;
@@ -880,14 +891,17 @@ async function main(): Promise<void> {
       pendingKickPowerBoost[1] = false;
     };
 
-    const syncHud = (): void => {
-      hud.renderMatchState(matchManager.score, matchManager.sets, matchManager.currentServer, matchManager.isMatchActive);
+    const emitPointScored = (team: 1 | 2): void => {
+      EventBus.emit<PointScoredEvent>('match:pointScored', {
+        team,
+        score: [matchManager.score[0], matchManager.score[1]],
+        sets:  [matchManager.sets[0],  matchManager.sets[1]],
+      });
     };
 
     const awardPoint = (scoringTeam: number): void => {
       matchManager.recordPoint(scoringTeam);
-      pointAnnouncement.announce(scoringTeam, matchManager.score[scoringTeam]);
-      syncHud();
+      emitPointScored((scoringTeam + 1) as 1 | 2);
       clearRallyState();
 
       if (matchManager.isMatchActive) {
@@ -901,8 +915,7 @@ async function main(): Promise<void> {
         if (doubleFaultOpponent !== null) {
           // Double fault: point already recorded inside recordFailedServe; just
           // run the post-point side effects (announcement, reset).
-          pointAnnouncement.announce(doubleFaultOpponent, matchManager.score[doubleFaultOpponent]);
-          syncHud();
+          emitPointScored((doubleFaultOpponent + 1) as 1 | 2);
           clearRallyState();
           if (matchManager.isMatchActive) {
             resetBallForServe(matchManager.currentServer);
@@ -912,7 +925,6 @@ async function main(): Promise<void> {
       }
       clearRallyState();
       resetBallForServe(matchManager.currentServer);
-      syncHud();
     };
 
     const getPreviewTarget = (): { character: Character | undefined; baseYaw: number } => {
@@ -1658,7 +1670,6 @@ async function main(): Promise<void> {
     setHitboxDebugVisible(false);
 
     matchManager.resetServe(0);
-    syncHud();
     resetBallForServe(0);
 
 
@@ -1667,6 +1678,9 @@ async function main(): Promise<void> {
     if (loadingScreen) {
       loadingScreen.style.display = 'none';
     }
+
+    // ── UI ────────────────────────────────────────────────────────────────
+    uiManager = new UIManager(gameScene);
 
     // InputManager wraps the shared pressedKeys set and provides consume-once helpers.
     inputManager = new InputManager(pressedKeys);
@@ -3256,14 +3270,7 @@ async function main(): Promise<void> {
       }
       p1KickButtonHeld = p1KickPressed;
 
-      // Update power meter: show only while P1 is actively charging
-      if (!ENABLE_P1_AI) {
-        if (p1KickChargeStart >= 0) {
-          hud.setPowerCharge(Math.min(1, (now - p1KickChargeStart) / 2000));
-        } else {
-          hud.setPowerCharge(null);
-        }
-      }
+      // Power meter charge indicator removed (HUD is now EventBus-driven via UIManager)
 
       if (!collisionDrill.enabled && !serveSetupActive && now - lastP2ActionPress > actionPressCooldown) {
         if (ENABLE_P2_AI) {
@@ -4217,8 +4224,7 @@ async function main(): Promise<void> {
 
       updateServeSequence(deltaTime);
 
-      pointAnnouncement.update(deltaTime);
-      hud.update(deltaTime);
+      // UI updates are driven by EventBus and BabylonJS animations via UIManager.
 
       // Subtle camera follow based on ball motion/position, independent of keys.
       const ballVel = physicsBody.getLinearVelocity();
@@ -4258,4 +4264,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(console.error);
+

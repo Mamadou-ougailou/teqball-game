@@ -1,148 +1,152 @@
+import { AdvancedDynamicTexture } from '@babylonjs/gui/2D/advancedDynamicTexture';
+import { TextBlock } from '@babylonjs/gui/2D/controls/textBlock';
+import { Rectangle } from '@babylonjs/gui/2D/controls/rectangle';
+import { StackPanel } from '@babylonjs/gui/2D/controls/stackPanel';
+import { Control } from '@babylonjs/gui/2D/controls/control';
 import { IEntity } from '@core/interfaces';
+import { EventBus } from '@core/EventBus';
 
 /**
- * HUD - In-match overlay (score, serve indicator, superpower cooldown)
+ * Payload emitted on 'match:pointScored'.
+ * team: 1-based (1 = left player, 2 = right player).
+ */
+export interface PointScoredEvent {
+  team: 1 | 2;
+  score: [number, number]; // [p1Points, p2Points] in current set
+  sets: [number, number];  // [p1Sets, p2Sets]
+}
+
+/**
+ * HUD — top-center score bar showing per-set points and set count.
+ * Subscribes to 'match:pointScored' on the EventBus and refreshes automatically.
  */
 export class HUD implements IEntity {
-  private readonly root: HTMLDivElement | null;
-  private readonly scoreLine: HTMLDivElement | null;
-  private readonly setsLine: HTMLDivElement | null;
-  private readonly serveLine: HTMLDivElement | null;
-  private readonly cooldownLine: HTMLDivElement | null;
-  private readonly powerMeterWrap: HTMLDivElement | null;
-  private readonly powerMeterFill: HTMLDivElement | null;
-  private score: [number, number] = [0, 0];
-  private sets: [number, number] = [0, 0];
-  private server = 0;
-  private matchActive = true;
+  private _container!: Rectangle;
+  private _p1ScoreText!: TextBlock;
+  private _p2ScoreText!: TextBlock;
+  private _setCounterText!: TextBlock;
 
-  constructor() {
-    if (typeof document === 'undefined') {
-      this.root = null;
-      this.scoreLine = null;
-      this.setsLine = null;
-      this.serveLine = null;
-      this.cooldownLine = null;
-      this.powerMeterWrap = null;
-      this.powerMeterFill = null;
-      return;
-    }
+  private readonly _onPointScored: (data: unknown) => void;
 
-    const root = document.createElement('div');
-    root.style.position = 'fixed';
-    root.style.left = '16px';
-    root.style.top = '16px';
-    root.style.zIndex = '20';
-    root.style.padding = '12px 14px';
-    root.style.borderRadius = '14px';
-    root.style.background = 'rgba(8, 12, 20, 0.68)';
-    root.style.backdropFilter = 'blur(10px)';
-    root.style.color = '#f7fbff';
-    root.style.fontFamily = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
-    root.style.fontSize = '14px';
-    root.style.lineHeight = '1.35';
-    root.style.letterSpacing = '0.02em';
-    root.style.boxShadow = '0 14px 30px rgba(0, 0, 0, 0.28)';
-    root.style.pointerEvents = 'none';
+  constructor(adt: AdvancedDynamicTexture) {
+    this._buildUI(adt);
 
-    const scoreLine = document.createElement('div');
-    scoreLine.style.fontSize = '22px';
-    scoreLine.style.fontWeight = '700';
-    scoreLine.style.marginBottom = '4px';
+    this._onPointScored = (data: unknown) => {
+      const e = data as PointScoredEvent;
+      this._p1ScoreText.text = String(e.score[0]);
+      this._p2ScoreText.text = String(e.score[1]);
+      this._setCounterText.text = `${e.sets[0]}  —  ${e.sets[1]}`;
+    };
 
-    const setsLine = document.createElement('div');
-    setsLine.style.opacity = '0.9';
-
-    const serveLine = document.createElement('div');
-    serveLine.style.opacity = '0.9';
-
-    const cooldownLine = document.createElement('div');
-    cooldownLine.style.marginTop = '6px';
-    cooldownLine.style.opacity = '0.78';
-    cooldownLine.style.fontSize = '12px';
-
-    const powerMeterWrap = document.createElement('div');
-    powerMeterWrap.style.marginTop = '8px';
-    powerMeterWrap.style.height = '8px';
-    powerMeterWrap.style.borderRadius = '4px';
-    powerMeterWrap.style.background = 'rgba(255,255,255,0.15)';
-    powerMeterWrap.style.overflow = 'hidden';
-    powerMeterWrap.style.display = 'none';
-
-    const powerMeterFill = document.createElement('div');
-    powerMeterFill.style.height = '100%';
-    powerMeterFill.style.width = '0%';
-    powerMeterFill.style.borderRadius = '4px';
-    powerMeterFill.style.transition = 'width 0.05s linear, background-color 0.1s linear';
-    powerMeterWrap.appendChild(powerMeterFill);
-
-    root.append(scoreLine, setsLine, serveLine, cooldownLine, powerMeterWrap);
-    document.body.appendChild(root);
-
-    this.root = root;
-    this.scoreLine = scoreLine;
-    this.setsLine = setsLine;
-    this.serveLine = serveLine;
-    this.cooldownLine = cooldownLine;
-    this.powerMeterWrap = powerMeterWrap;
-    this.powerMeterFill = powerMeterFill;
-    this.render();
+    EventBus.on('match:pointScored', this._onPointScored);
   }
 
-  updateScore(_team: number, _points: number): void {
-    const team = _team === 0 ? 0 : 1;
-    this.score[team] = Math.max(0, Math.floor(_points));
-    this.render();
+  private _buildUI(adt: AdvancedDynamicTexture): void {
+    // ── Outer background bar ───────────────────────────────────────────────
+    const bg = new Rectangle('hudBg');
+    bg.width = '380px';
+    bg.height = '72px';
+    bg.cornerRadius = 8;
+    bg.color = 'transparent';
+    bg.background = 'rgba(0, 0, 0, 0.58)';
+    bg.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    bg.verticalAlignment = Control.VERTICAL_ALIGNMENT_TOP;
+    bg.top = '10px';
+    adt.addControl(bg);
+    this._container = bg;
+
+    // ── Horizontal row inside the bar ─────────────────────────────────────
+    const row = new StackPanel('hudRow');
+    row.isVertical = false;
+    row.width = '360px';
+    row.height = '72px';
+    row.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    row.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    bg.addControl(row);
+
+    // ── Player 1 column ───────────────────────────────────────────────────
+    const p1Col = new StackPanel('p1Col');
+    p1Col.isVertical = true;
+    p1Col.width = '120px';
+    p1Col.height = '72px';
+    row.addControl(p1Col);
+
+    const p1Label = new TextBlock('p1Label', 'PLAYER 1');
+    p1Label.color = '#88bbff';
+    p1Label.fontSize = 11;
+    p1Label.fontFamily = 'monospace';
+    p1Label.height = '22px';
+    p1Label.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    p1Col.addControl(p1Label);
+
+    this._p1ScoreText = new TextBlock('p1Score', '0');
+    this._p1ScoreText.color = 'white';
+    this._p1ScoreText.fontSize = 32;
+    this._p1ScoreText.fontWeight = 'bold';
+    this._p1ScoreText.fontFamily = 'monospace';
+    this._p1ScoreText.height = '46px';
+    this._p1ScoreText.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    p1Col.addControl(this._p1ScoreText);
+
+    // ── Set counter column ────────────────────────────────────────────────
+    const setCol = new StackPanel('setCol');
+    setCol.isVertical = true;
+    setCol.width = '120px';
+    setCol.height = '72px';
+    row.addControl(setCol);
+
+    const setLabel = new TextBlock('setLabel', 'SET');
+    setLabel.color = '#aaaaaa';
+    setLabel.fontSize = 11;
+    setLabel.fontFamily = 'monospace';
+    setLabel.height = '22px';
+    setLabel.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    setCol.addControl(setLabel);
+
+    this._setCounterText = new TextBlock('setCounter', '0  —  0');
+    this._setCounterText.color = '#ffdd88';
+    this._setCounterText.fontSize = 20;
+    this._setCounterText.fontWeight = 'bold';
+    this._setCounterText.fontFamily = 'monospace';
+    this._setCounterText.height = '46px';
+    this._setCounterText.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    setCol.addControl(this._setCounterText);
+
+    // ── Player 2 column ───────────────────────────────────────────────────
+    const p2Col = new StackPanel('p2Col');
+    p2Col.isVertical = true;
+    p2Col.width = '120px';
+    p2Col.height = '72px';
+    row.addControl(p2Col);
+
+    const p2Label = new TextBlock('p2Label', 'PLAYER 2');
+    p2Label.color = '#ffaa66';
+    p2Label.fontSize = 11;
+    p2Label.fontFamily = 'monospace';
+    p2Label.height = '22px';
+    p2Label.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    p2Col.addControl(p2Label);
+
+    this._p2ScoreText = new TextBlock('p2Score', '0');
+    this._p2ScoreText.color = 'white';
+    this._p2ScoreText.fontSize = 32;
+    this._p2ScoreText.fontWeight = 'bold';
+    this._p2ScoreText.fontFamily = 'monospace';
+    this._p2ScoreText.height = '46px';
+    this._p2ScoreText.textHorizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    p2Col.addControl(this._p2ScoreText);
   }
 
   updateCooldown(_ability: string, _percent: number): void {
-    if (this.cooldownLine) {
-      const percent = Math.max(0, Math.min(100, Math.round(_percent * 100)));
-      this.cooldownLine.textContent = `${_ability}: ${percent}%`;
-    }
-  }
-
-  renderMatchState(score: [number, number], sets: [number, number], server: number, matchActive: boolean): void {
-    this.score = [score[0], score[1]];
-    this.sets = [sets[0], sets[1]];
-    this.server = server === 0 ? 0 : 1;
-    this.matchActive = matchActive;
-    this.render();
-  }
-
-  private render(): void {
-    if (!this.scoreLine || !this.setsLine || !this.serveLine) {
-      return;
-    }
-
-    this.scoreLine.textContent = `P1 ${this.score[0]}  -  ${this.score[1]} P2`;
-    this.setsLine.textContent = `Sets ${this.sets[0]} - ${this.sets[1]}`;
-    this.serveLine.textContent = this.matchActive ? `Serve: P${this.server + 1}` : 'Match complete';
-  }
-
-  /**
-   * Show/update the power charge bar. Pass null to hide it.
-   * fraction: 0–1 where 1 = max charge (2 s hold).
-   */
-  setPowerCharge(fraction: number | null): void {
-    if (!this.powerMeterWrap || !this.powerMeterFill) return;
-    if (fraction === null) {
-      this.powerMeterWrap.style.display = 'none';
-      return;
-    }
-    const pct = Math.min(1, Math.max(0, fraction));
-    this.powerMeterWrap.style.display = 'block';
-    this.powerMeterFill.style.width = `${pct * 100}%`;
-    // green → yellow → red as charge builds
-    const r = Math.round(pct < 0.5 ? pct * 2 * 255 : 255);
-    const g = Math.round(pct < 0.5 ? 200 : (1 - (pct - 0.5) * 2) * 200);
-    this.powerMeterFill.style.backgroundColor = `rgb(${r},${g},40)`;
+    // TODO Phase 4: CooldownRing
   }
 
   update(_deltaTime: number): void {
+    // Driven by EventBus — no per-frame work required.
   }
 
   dispose(): void {
-    this.root?.remove();
+    EventBus.off('match:pointScored', this._onPointScored);
+    this._container.dispose();
   }
 }

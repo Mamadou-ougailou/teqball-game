@@ -43,6 +43,7 @@ export class AssetManager implements IEntity {
     player_alien: 'Neymar.glb',
     alien: 'Neymar.glb',
     neymar: 'Neymar.glb',
+    bleachers: 'bleachers.glb',
   };
 
   constructor(scene: Scene) {
