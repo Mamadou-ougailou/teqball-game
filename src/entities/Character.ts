@@ -53,6 +53,7 @@ export class Character implements ICharacter {
   private _idleReturnRotationOffsetYaw = 0;
   private _currentStrikeBoneName: string | null = null;
   private _currentAnimConfig: AnimConfig | null = null;
+  private _currentActionKey: GameplayAction | string | null = null;
   private readonly _socketGroundDistanceByAction = new Map<string, number>();
 
   // Some source clips are authored with left/right semantics inverted.
@@ -92,7 +93,10 @@ export class Character implements ICharacter {
     ['solerightfootkick', 0],
     ['bicycle', 180],
     ['righttoefootreception', 5],
-    ['rightkneereception', 90],
+    ['rightkneereception', 0],
+    ['innerrightfootreception', 0],
+    ['bridgereceptionleftfoot', 0],
+    ['bridgereceptionrightfoot', 0],
     ['knee1', 5],
     ['scissorkick', 180],
     ['scissor', 180],
@@ -409,6 +413,12 @@ export class Character implements ICharacter {
     // Freeze locomotion updates while an action animation is running.
     if (this._kickTimer > 0) {
       this._kickTimer = Math.max(0, this._kickTimer - deltaTime);
+      if (this._kickTimer <= 0) {
+        this._currentStrikeBoneName = null;
+        this._currentAnimConfig = null;
+        this._activeFootSide = 'center';
+        this._currentActionKey = null;
+      }
       return;
     }
 
@@ -434,6 +444,12 @@ export class Character implements ICharacter {
     }
 
     if (desired === 'idle') {
+      // Safety: one-shot clips can set mirrored playback for a strike side.
+      // Idle should always return to neutral non-mirrored facing.
+      if (this._mirrorX) {
+        this._setMirrorX(false);
+      }
+
       if (this._state !== CharacterState.IDLE || this._locomotionAnim !== 'idle') {
         this._state = CharacterState.IDLE;
         this._locomotionAnim = 'idle';
@@ -496,6 +512,7 @@ export class Character implements ICharacter {
 
     const actionSpeedRatio = Character.ACTION_ANIM_SPEED_RATIO;
     this._kickTimer = this._computeActionLockSeconds(animConfig, timer, actionSpeedRatio);
+    this._currentActionKey = action;
     this._currentStrikeBone = strikeBone;
     this._currentStrikeBoneName = animConfig?.activeBone?.trim() ? animConfig.activeBone : null;
     this._currentAnimConfig = animConfig;
@@ -517,6 +534,10 @@ export class Character implements ICharacter {
       }
     }
 
+    // Preserve external gameplay facing (table-facing) before clip-specific
+    // pre-rotation/mirroring tweaks so we can restore it immediately on end.
+    this._captureFacingYaw();
+
     const preRotationYaw = ((animConfig?.preRotationY ?? 0) * Math.PI) / 180;
     if (Math.abs(preRotationYaw) > 1e-5) {
       this.mesh.rotation.y += preRotationYaw;
@@ -526,13 +547,17 @@ export class Character implements ICharacter {
 
     this._setMirrorX(shouldMirror);
     this._setFacingCompensationForKey(clipKey);
-    this._captureFacingYaw();
     const startupTrim = this._getStartupTrimFrames(clipKey);
     this._anim.playOnce(
       clipKey,
       'idle',
       actionSpeedRatio,
-      () => this._restoreFacingYaw(),
+      () => {
+        this._restoreFacingYaw();
+        this._setMirrorX(false);
+        this._setFacingCompensationForKey('idle');
+        this._capturedFacingYaw = null;
+      },
       startupTrim,
       this._getStartupTrimFrames('idle'),
     );
@@ -738,6 +763,15 @@ export class Character implements ICharacter {
   }
 
   getMirrorFacingCompensationYaw(): number {
+    // Keep legacy/global behavior for all animations so serve and other clips
+    // preserve their authored facing. Only suppress mirror-yaw for inner-foot
+    // reception variants, which otherwise turn side/back.
+    const isInnerFootReception =
+      this._currentActionKey === 'receptionInnerRight' ||
+      this._currentActionKey === 'prepInnerRight';
+    if (isInnerFootReception) {
+      return 0;
+    }
     return this._mirrorX ? Math.PI : 0;
   }
 
@@ -833,6 +867,7 @@ export class Character implements ICharacter {
       if (this._kickTimer <= 0) {
         this._currentStrikeBoneName = null;
         this._currentAnimConfig = null;
+        this._currentActionKey = null;
       }
     }
   }

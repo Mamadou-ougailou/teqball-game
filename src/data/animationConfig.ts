@@ -194,7 +194,7 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     ballSpeed: SPEED_PRESET.LOW,
     ballLoft: 0.8,
     mirrorSafe: true,
-    preRotationY: -60,
+    preRotationY: 0,
     idleReturnRotY: 0,
   },
   bridgeReception2Left: {
@@ -206,7 +206,7 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     ballSpeed: SPEED_PRESET.LOW,
     ballLoft: 0.8,
     mirrorSafe: true,
-    preRotationY: -60,
+    preRotationY: 0,
     idleReturnRotY: 0,
   },
   jumpingHeaderKick: {
