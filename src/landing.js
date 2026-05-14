@@ -213,12 +213,15 @@ function createAmbientDrone() {
 
 /* ── NARRATION CARDS ── */
 const NARRATION_CARDS = [
-  { text: 'Dans un monde où les lois de la physique sont brisées…', speed: 45, pause: 1800 },
-  { text: 'Deux légendes s’affrontent sur une table courbée.', speed: 50, pause: 1800 },
-  { text: 'Chaque frappe est une œuvre d’art.', speed: 60, pause: 1600 },
-  { text: 'Chaque point, une victoire sur l’impossible.', speed: 55, pause: 1700 },
-  { text: 'L’arène vous attend.', speed: 70, pause: 1200 },
-  { text: 'TEQBALL', subtext: 'ÉDITION SURRÉALISTE', speed: 85, pause: 2500, isTitle: true },
+  { text: "Dans un monde où l'IA a tout conquis...", speed: 45, pause: 1800 },
+{ text: "Les échecs, la médecine, la création.", speed: 50, pause: 1600 },
+{ text: "L'homme a plié. Mais jamais rompu.", speed: 55, pause: 2000 },
+{ text: "Il reste un terrain où la machine n'a pas gagné.", speed: 48, pause: 2000 },
+{ text: "Là où le corps parle avant l'algorithme.", speed: 52, pause: 1800 },
+{ text: "Chaque frappe, une œuvre que nul code ne peut imiter.", speed: 50, pause: 1900 },
+{ text: "Chaque point, une victoire pour l'humanité.", speed: 55, pause: 1700 },
+{ text:  "L'arène vous attend.", speed: 70, pause: 1200 },
+{ text: 'TEQBALL', subtext: 'ÉDITION SURRÉALISTE', speed: 85, pause: 2500, isTitle: true },
 ];
 
 const _wait = ms => new Promise(r => setTimeout(r, ms));
