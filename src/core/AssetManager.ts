@@ -77,7 +77,7 @@ export class AssetManager implements IEntity {
       // Animation groups already target these meshes; no retargeting needed.
       container.addAllToScene();
       return {
-        meshes:          container.meshes as AbstractMesh[],
+        meshes:          container.meshes,
         skeletons:       container.skeletons,
         animationGroups: container.animationGroups,
       };
@@ -92,7 +92,7 @@ export class AssetManager implements IEntity {
     // so callers can always use meshes[0] for position / rotation.
     return {
       meshes:          instance.rootNodes.flatMap(n =>
-                         [n as unknown as AbstractMesh, ...n.getChildMeshes()]) as AbstractMesh[],
+                         [n as unknown as AbstractMesh, ...n.getChildMeshes()]),
       skeletons:       instance.skeletons,
       animationGroups: instance.animationGroups,
     };

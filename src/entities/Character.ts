@@ -16,7 +16,7 @@ type GameplayAction =
   | 'kickHighLeft' | 'kickJumpHead' | 'kickSoleRight' | 'kickBicycleLeft' | 'kickChest';
 
 type ActionDefinition = {
-  clipKey: PlayerAnimKey | string;
+  clipKey: PlayerAnimKey  ;
   timer: number;
   strikeBone: 'head' | 'chest' | 'foot';
   autoMirrorByFoot: boolean;
@@ -53,7 +53,7 @@ export class Character implements ICharacter {
   private _idleReturnRotationOffsetYaw = 0;
   private _currentStrikeBoneName: string | null = null;
   private _currentAnimConfig: AnimConfig | null = null;
-  private _currentActionKey: GameplayAction | string | null = null;
+  private _currentActionKey: string | null = null;
   private readonly _socketGroundDistanceByAction = new Map<string, number>();
 
   // Some source clips are authored with left/right semantics inverted.
@@ -149,7 +149,7 @@ export class Character implements ICharacter {
     }
   }
 
-  private _getFacingCompensationForKey(key: PlayerAnimKey | string): number {
+  private _getFacingCompensationForKey(key: PlayerAnimKey  ): number {
     const token = this._normalizeToken(String(key));
     for (const [fragment, deg] of Character.FACING_COMPENSATION_DEG) {
       if (token.includes(fragment)) {
@@ -169,11 +169,11 @@ export class Character implements ICharacter {
     return 0;
   }
 
-  private _setFacingCompensationForKey(key: PlayerAnimKey | string): void {
+  private _setFacingCompensationForKey(key: PlayerAnimKey  ): void {
     this._animationFacingCompensationYaw = this._getFacingCompensationForKey(key);
   }
 
-  private _getStartupTrimFrames(clipKey: PlayerAnimKey | string): number {
+  private _getStartupTrimFrames(clipKey: PlayerAnimKey  ): number {
     const animConfig = getAnimConfigForClip(String(clipKey));
     return Math.max(0, Math.round(animConfig?.startupTrimFrames ?? 3));
   }
@@ -198,7 +198,7 @@ export class Character implements ICharacter {
     return Math.max(fallbackSeconds, lockSeconds);
   }
 
-  private _resolveActionDefinition(action: GameplayAction | string): ActionDefinition | null {
+  private _resolveActionDefinition(action: string): ActionDefinition | null {
     switch (action) {
       case 'header':
       case 'kickHead':
@@ -349,7 +349,7 @@ export class Character implements ICharacter {
     return Math.max(0, socketPos.y);
   }
 
-  precomputeActionSocketGroundDistances(actions: Array<GameplayAction | string>): void {
+  precomputeActionSocketGroundDistances(actions: Array<string>): void {
     for (const action of actions) {
       const key = String(action);
       if (this._socketGroundDistanceByAction.has(key)) continue;
@@ -364,7 +364,7 @@ export class Character implements ICharacter {
     }
   }
 
-  getActionSocketGroundDistanceAtContact(action: GameplayAction | string): number | null {
+  getActionSocketGroundDistanceAtContact(action: string): number | null {
     const key = String(action);
     const cached = this._socketGroundDistanceByAction.get(key);
     if (cached !== undefined) return cached;
@@ -506,7 +506,7 @@ export class Character implements ICharacter {
 
     const { clipKey, timer, strikeBone } = definition;
     let autoMirrorByFoot = definition.autoMirrorByFoot;
-    let forceMirror = definition.forceMirror;
+    const forceMirror = definition.forceMirror;
 
     const animConfig = getAnimConfigForClip(String(clipKey));
 
@@ -580,7 +580,7 @@ export class Character implements ICharacter {
     return value.toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
-  private _needsAutoMirrorByKey(key: PlayerAnimKey | string): boolean {
+  private _needsAutoMirrorByKey(key: PlayerAnimKey  ): boolean {
     const token = this._normalizeToken(String(key));
     return Character.AUTO_MIRROR_KEYS.has(token);
   }
@@ -737,7 +737,7 @@ export class Character implements ICharacter {
   }
 
   /** Force a specific animation by key (for scripted sequences). */
-  playAnimation(key: PlayerAnimKey | string, loop = true, mirrorX = false, onEnd?: () => void): void {
+  playAnimation(key: PlayerAnimKey  , loop = true, mirrorX = false, onEnd?: () => void): void {
     const effectiveMirror = mirrorX !== this._needsAutoMirrorByKey(key);
     this._setMirrorX(effectiveMirror);
     this._setFacingCompensationForKey(key);

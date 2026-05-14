@@ -1,4 +1,5 @@
 import { IMatchManager } from '@core/interfaces';
+import { EventBus } from '@core/EventBus';
 import { POINTS_PER_SET, SETS_TO_WIN } from './constants';
 
 const SERVICE_CHANGE_EVERY = 4; // points per serve block
@@ -112,6 +113,14 @@ export class MatchManager implements IMatchManager {
     this._currentServer = winningTeam === 0 ? 0 : 1;
     this._isMatchActive = false;
     this._winner = winningTeam === 0 ? 0 : 1;
+    EventBus.emit('match:end', this._winner);
+  }
+
+  restartMatch(): void {
+    this._score = [0, 0];
+    this._sets = [0, 0];
+    this._winner = null;
+    this._startNewSet(0);
   }
 
   private _startNewSet(server: number): void {

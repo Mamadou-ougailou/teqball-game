@@ -23,6 +23,7 @@
  * - Players positioned on opposite sides of table along Z axis
  */
 
+import { SceneBuilder } from './core/SceneBuilder';
 import { BabylonEngine } from './core/Engine';
 import { AssetManager } from './core/AssetManager';
 import { EventBus } from './core/EventBus';
@@ -36,6 +37,8 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { GlowLayer } from '@babylonjs/core/Layers/glowLayer';
+import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import { Ball } from './entities/Ball';
 import { Character } from './entities/Character';
 import { CharacterStats } from './core/interfaces';
@@ -57,7 +60,25 @@ import {
 import { InputManager } from './systems/InputManager';
 import neymarAnimData from './data/characters/neymar.json';
 
-const SCALE = 1.5; // Global scale factor
+import {
+  SCALE, DOUBLE_TAP_WINDOW_MS, P1_KICK_GRACE_MS, KICK_CHARGE_TABLE,
+  BALL_SPAWN_POSITION, BALL_MAX_UPWARD_SPEED, BALL_MAX_DOWNWARD_SPEED,
+  BALL_RESET_HEIGHT, BALL_RESET_MIN_Y, BALL_RESET_X_LIMIT, BALL_RESET_Z_LIMIT,
+  PLAYER_MODEL_YAW_OFFSET, ENABLE_P1_AI, ENABLE_P2_AI, SERVE_LINE_Z,
+  PLAYER_SPAWN_Z, PLAYER_TABLE_CLEARANCE_Z, PURE_BALL_PHYSICS, ENABLE_BALL_ASSIST,
+  TABLE_SCALE, WORLD_BOUNCE_RESTITUTION, TABLE_BOUNCE_RESTITUTION,
+  BALL_BOUNCE_RESTITUTION, GLOBAL_KICK_VELOCITY_MULTIPLIER,
+  ENABLE_NO_GROUND_FALL_GUARD, NO_GROUND_FALL_TRIGGER_HEIGHT,
+  NO_GROUND_FALL_REBOUND_MIN_SPEED, NO_GROUND_FALL_RESTITUTION,
+  NO_GROUND_FALL_LATERAL_DAMPING, getCourtCenterFacing, getLateralReceptionFacing,
+  AI_BEHIND_SERVE_TARGET_Z, AI_PREP_STEP_IN_TARGET_Z, AI_FINAL_KICK_TARGET_Z,
+  AI_SHORT_RETURN_STEP_IN_Z, AI_LOW_SPEED_RETURN_THRESHOLD,
+  SERVE_READY_PAUSE_SECONDS, SERVE_FLIGHT_LOCK_MAX_SECONDS,
+  SERVE_TOSS_RIGHT_ANGLE_DEG, SERVE_TOSS_FORWARD_ANGLE_DEG,
+  SERVE_TOSS_HEIGHT_MULT, SERVE_TOSS_CONTACT_RIGHT_MAX,
+  SERVE_TOSS_CONTACT_FORWARD_MAX, CourtSide, OffensiveAction,
+  SOCKET_HEIGHT_CALIBRATION_ACTIONS, ServePhase, ServeState
+} from './config/GameConfig';
 
 let gameScene: Scene;
 let assetManager: AssetManager;
@@ -66,7 +87,9 @@ let player1: Character;
 let player2: Character;
 let matchManager: MatchManager;
 let inputManager: InputManager;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let uiManager: UIManager | undefined;
+
 const pressedKeys = new Set<string>();
 const controlKeys = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's', 'space']);
 controlKeys.add('enter');
@@ -88,11 +111,11 @@ let lastP1LiftPress = 0;
 let lastP2LiftPress = 0;
 let lastP1ActionPress = 0;
 let lastP2ActionPress = 0;
-let lastP1KickButtonPress = 0;
+
 let lastP2KickButtonPress = 0;
 let p1KickButtonHeld = false;
 let p2KickButtonHeld = false;
-const DOUBLE_TAP_WINDOW_MS = 260;
+
 const pendingPrepSuperHigh: [boolean, boolean] = [false, false];
 const pendingKickPowerBoost: [boolean, boolean] = [false, false];
 // D-pad aim snapshot captured at the moment the human player presses the kick button.
@@ -102,17 +125,10 @@ const p1KickAim = { x: 0, z: 0 };
 let p1KickChargeStart = -1;
 // Grace-period auto-kick: timestamp (ms) when the kick phase started for P1, -1 = not counting.
 let p1KickGraceStart = -1;
-const P1_KICK_GRACE_MS = 2500;
+
 // Power multiplier consumed at kick-hit time (set on Space release).
 const p1KickPowerMult = { value: 1.0 };
-// Maps hold duration (ms) to a speed multiplier relative to the clip's default speed.
-const KICK_CHARGE_TABLE: Array<[number, number]> = [
-  [300,      0.80],
-  [700,      1.00],
-  [1200,     1.20],
-  [2000,     1.45],
-  [Infinity, 1.75],
-];
+
 let animationPreviewMode = false;
 let animationPreviewPlayer = 1;
 let animationPreviewClipIndex = 0;
@@ -120,86 +136,7 @@ let animationPreviewMirror = false;
 let animationPreviewSpeed = 1.0;
 let animationPreviewFacingFlip = false;
 let animationPreviewLockedYaw: number | null = null;
-// Spawn ball well above the table surface (table top is ~0.76 m; ball radius 0.11 m)
-const BALL_SPAWN_POSITION = new Vector3(0, 1.5 * SCALE, 0);
-const BALL_MAX_UPWARD_SPEED = 8 * SCALE;
-const BALL_MAX_DOWNWARD_SPEED = 18 * SCALE;
-const BALL_RESET_HEIGHT = 8 * SCALE;
-const BALL_RESET_MIN_Y = -4 * SCALE;
-const BALL_RESET_X_LIMIT = 10 * SCALE;
-const BALL_RESET_Z_LIMIT = 14 * SCALE;
-const PLAYER_MODEL_YAW_OFFSET = -Math.PI / 2;
-const ENABLE_P1_AI = true; // AI vs AI preview mode
-const ENABLE_P2_AI = true;
-const SERVE_LINE_Z = 3.5 * SCALE;
-const PLAYER_SPAWN_Z = 4.2 * SCALE;
-const PLAYER_TABLE_CLEARANCE_Z = 2.3 * SCALE;
-const PURE_BALL_PHYSICS = true;
-const ENABLE_BALL_ASSIST = !PURE_BALL_PHYSICS; // scripted ball arcs for auto-touches + aim kick
-const TABLE_SCALE = 1.0;
-const WORLD_BOUNCE_RESTITUTION = 0.82;
-const TABLE_BOUNCE_RESTITUTION = 0.84;
-const BALL_BOUNCE_RESTITUTION = 0.84;
-const GLOBAL_KICK_VELOCITY_MULTIPLIER = 1.20;
-const ENABLE_NO_GROUND_FALL_GUARD = true;
-const NO_GROUND_FALL_TRIGGER_HEIGHT = 0.07 * SCALE;
-const NO_GROUND_FALL_REBOUND_MIN_SPEED = 2.2 * SCALE;
-const NO_GROUND_FALL_RESTITUTION = 0.82;
-const NO_GROUND_FALL_LATERAL_DAMPING = 0.97;
-const getCourtCenterFacing = (position: Vector3): number => Math.atan2(-position.x, -position.z);
-const getLateralReceptionFacing = (position: Vector3, ballPosition: Vector3): number => {
-  const centerFacing = getCourtCenterFacing(position);
-  const towardBallSide = ballPosition.x >= position.x ? -1 : 1;
-  return centerFacing + towardBallSide * (Math.PI / 2);
-};
-// Bleachers scene meshes provide all world collisions (floor, stands, table).
-const AI_BEHIND_SERVE_TARGET_Z = SERVE_LINE_Z + 0.55 * SCALE;
-const AI_PREP_STEP_IN_TARGET_Z = SERVE_LINE_Z - 0.65 * SCALE;
-const AI_FINAL_KICK_TARGET_Z = SERVE_LINE_Z - 1.00 * SCALE;
-const AI_SHORT_RETURN_STEP_IN_Z = SERVE_LINE_Z - 0.35 * SCALE;
-const AI_LOW_SPEED_RETURN_THRESHOLD = 2.8 * SCALE;
-const SERVE_READY_PAUSE_SECONDS = 0.35;
-const SERVE_FLIGHT_LOCK_MAX_SECONDS = PURE_BALL_PHYSICS ? 4.0 : 1.6;
-const SERVE_TOSS_RIGHT_ANGLE_DEG = -45;
-const SERVE_TOSS_FORWARD_ANGLE_DEG = -30;
-const SERVE_TOSS_HEIGHT_MULT = 3.15;
-const SERVE_TOSS_CONTACT_RIGHT_MAX = 0.16;
-const SERVE_TOSS_CONTACT_FORWARD_MAX = 0.12;
 
-type CourtSide = 0 | 1; // 0 = P1/negative Z side, 1 = P2/positive Z side
-type OffensiveAction =
-  | 'header' | 'chest' | 'knee' | 'scissor' // legacy aliases
-  | 'receptionChest' | 'receptionToe' | 'receptionInnerRight'
-  | 'prepChest' | 'prepInnerRight'
-  | 'kickCloseHead' | 'kickCloseRightFoot' | 'kickHead'
-  | 'kickHighLeft' | 'kickJumpHead' | 'kickSoleRight' | 'kickBicycleLeft' | 'kickChest';
-const SOCKET_HEIGHT_CALIBRATION_ACTIONS: OffensiveAction[] = [
-  'receptionChest',
-  'receptionToe',
-  'receptionInnerRight',
-  'prepChest',
-  'prepInnerRight',
-  'kickCloseHead',
-  'kickCloseRightFoot',
-  'kickHead',
-  'kickHighLeft',
-  'kickJumpHead',
-  'kickSoleRight',
-  'kickBicycleLeft',
-  'kickChest',
-];
-type ServePhase = 'ready' | 'toss' | 'strike' | 'flight';
-type ServeState = {
-  active: boolean;
-  server: CourtSide;
-  phase: ServePhase;
-  timer: number;
-  tossReleased: boolean;
-  strikeApplied: boolean;
-  animationStarted: boolean;
-  foot: 'left' | 'right';
-  hand: 'left' | 'right';
-};
 
 const serveState: ServeState = {
   active: false,
@@ -222,39 +159,15 @@ export async function main(): Promise<void> {
     }
     const canvas = canvasElement;
 
-    // Initialize BabylonJS Engine
-    const engine = BabylonEngine.init(canvas);
-
-    // Create game scene
-    gameScene = new Scene(engine.getNativeEngine());
-    gameScene.collisionsEnabled = true;
-
-    // Setup camera
-    const camera = new ArcRotateCamera(
-      'camera',
-      -Math.PI / 2,
-      Math.PI / 3,
-      20 * SCALE,
-      new Vector3(0, 0, 0),
-      gameScene
-    );
-    camera.attachControl(canvas, true);
-    camera.wheelPrecision = 50;
-    // Arrow keys are reserved for player controls; keep mouse/touch camera input.
-    camera.keysUp = [];
-    camera.keysDown = [];
-    camera.keysLeft = [];
-    camera.keysRight = [];
+    const { engine, scene, camera, havokPlugin } = await SceneBuilder.createSurrealisticScene(canvas);
+    gameScene = scene;
+    const hk = (havokPlugin as unknown as { _hknp?: Record<string, (...a: unknown[]) => unknown> })._hknp;
 
     // Camera follows the ball target subtly (not a hard chase cam).
     const cameraBaseTarget = new Vector3(0, 0, 0);
     const cameraFollowStrength = 0.18;
     const cameraFollowMaxOffsetX = 1.8 * SCALE;
     const cameraFollowMaxOffsetZ = 2.2 * SCALE;
-
-    // Setup lighting - increase intensity for better visibility
-    const light = new HemisphericLight('light', new Vector3(0, 1, 0), gameScene);
-    light.intensity = 1.2;
 
     // ------------------------------------------------------------------
     // Collision layers (bit masks)
@@ -265,27 +178,6 @@ export async function main(): Promise<void> {
     const COL_BALL   = 1;
     const COL_WORLD  = 2;
     const COL_PLAYER = 4;
-
-    // Initialize physics engine
-    const havokInstance = await HavokPhysics({
-      locateFile: () => '/HavokPhysics.wasm'
-    });
-    const havokPlugin = new HavokPlugin(true, havokInstance);
-    gameScene.enablePhysics(new Vector3(0, -9.81, 0), havokPlugin);
-
-    // Run physics at 120 Hz (half-step) — halves the tunnelling window
-    // for fast-moving objects like the ball passing through thin surfaces.
-    havokPlugin.setTimeStep(1 / 120);
-
-    // Bump solver iterations from the Havok default (4) to 10 velocity + 4 position.
-    // The extra passes significantly improve ball-to-curved-surface contact accuracy
-    // for a sports simulation at the cost of a small (~15 %) CPU overhead.
-    const hk = (havokPlugin as any)._hknp as Record<string, (...a: unknown[]) => unknown> | undefined;
-    const havokWorld = (havokPlugin as any).world as unknown;
-    if (hk && havokWorld !== undefined) {
-      (hk['HP_World_SetNumConstraintSolverVelocityIterations'] as Function)?.(havokWorld, 10);
-      (hk['HP_World_SetNumConstraintSolverPositionIterations'] as Function)?.(havokWorld, 4);
-    }
 
     // Initialize asset manager
     assetManager = new AssetManager(gameScene);
@@ -374,9 +266,9 @@ export async function main(): Promise<void> {
 
         if (shapeUsed === PhysicsShapeType.MESH) {
           // Mesh welding smooths adjacent triangle normals for rolling contacts.
-          const hpShape = (mesh.physicsBody.shape as any)._pluginData?.hpShape as unknown;
+          const hpShape = (mesh.physicsBody.shape as unknown as { _pluginData?: { hpShape?: unknown } })._pluginData?.hpShape;
           if (hk && hpShape !== undefined) {
-            (hk['HP_Shape_SetWeldingType'] as Function)?.(hpShape, 3);
+            (hk['HP_Shape_SetWeldingType'] as (...args: unknown[]) => void)?.(hpShape, 3);
           }
         }
       }
@@ -399,7 +291,8 @@ export async function main(): Promise<void> {
       lineY = courtBounds.max.y + 0.004 * SCALE;
     }
 
-    const whiteColor = Color3.White();
+    const neonCyan = new Color3(0, 1, 1);
+    const neonPink = new Color3(1, 0, 1);
     const serviceLineWidth = 1.5 * SCALE;
     const serviceLinesDist = SERVE_LINE_Z;
 
@@ -413,7 +306,7 @@ export async function main(): Promise<void> {
       },
       gameScene,
     );
-    halfwayLine.color = whiteColor;
+    halfwayLine.color = neonCyan;
 
     const serviceLineTop = MeshBuilder.CreateLines(
       'serviceLineTop',
@@ -425,7 +318,7 @@ export async function main(): Promise<void> {
       },
       gameScene,
     );
-    serviceLineTop.color = whiteColor;
+    serviceLineTop.color = neonPink;
 
     const serviceLineBottom = MeshBuilder.CreateLines(
       'serviceLineBottom',
@@ -437,7 +330,7 @@ export async function main(): Promise<void> {
       },
       gameScene,
     );
-    serviceLineBottom.color = whiteColor;
+    serviceLineBottom.color = neonPink;
 
     const boundary = MeshBuilder.CreateLines(
       'boundary',
@@ -452,7 +345,7 @@ export async function main(): Promise<void> {
       },
       gameScene,
     );
-    boundary.color = whiteColor;
+    boundary.color = neonCyan;
 
     // Fully procedural ball (visual + physics) to avoid GLB hierarchy issues
     // during serve toss and strike contact windows.
@@ -499,9 +392,9 @@ export async function main(): Promise<void> {
     ballRootMesh.isPickable = false;
 
     const ballMaterial = new StandardMaterial('ballMaterial', gameScene);
-    ballMaterial.diffuseColor = new Color3(0.97, 0.97, 0.97);
-    ballMaterial.specularColor = new Color3(0.28, 0.28, 0.28);
-    ballMaterial.emissiveColor = new Color3(0.04, 0.04, 0.04);
+    ballMaterial.diffuseColor = new Color3(1.0, 1.0, 1.0);
+    ballMaterial.specularColor = new Color3(1.0, 1.0, 1.0);
+    ballMaterial.emissiveColor = new Color3(0.0, 1.0, 1.0); // Glowing cyan ball
     ballRootMesh.material = ballMaterial;
 
     ball = new Ball(ballPhysicsMesh);
@@ -525,10 +418,10 @@ export async function main(): Promise<void> {
         ballPhysicsMesh.physicsBody.shape.filterCollideMask    = PURE_BALL_PHYSICS ? COL_WORLD : (COL_WORLD | COL_PLAYER);
       }
 
-      const hpBallBody = (ballPhysicsMesh.physicsBody as any)._pluginData?.hpBody as unknown;
+      const hpBallBody = (ballPhysicsMesh.physicsBody as unknown as { _pluginData?: { hpBody?: unknown } })._pluginData?.hpBody;
       if (hk && hpBallBody !== undefined) {
-        (hk['HP_Body_SetDeactivationEnabled'] as Function)?.(hpBallBody, false);
-        (hk['HP_Body_SetQualityType'] as Function)?.(hpBallBody, 5);
+        (hk['HP_Body_SetDeactivationEnabled'] as (...args: unknown[]) => void)?.(hpBallBody, false);
+        (hk['HP_Body_SetQualityType'] as (...args: unknown[]) => void)?.(hpBallBody, 5);
       }
     }
 
@@ -1903,9 +1796,6 @@ export async function main(): Promise<void> {
     const scissorKickSpeed = 8.2 * SCALE;
     const animConfigBallSpeedScale = 0.01 * SCALE;
     const actionExtraLift = 1.4 * SCALE;
-    const actionStrikeWindow = 0.28; // seconds
-    const actionBallMinY = 1.25 * SCALE;
-    const actionAssistStartRange = 2.55 * SCALE;
     const actionAssistDuration = 0.34; // seconds
     const actionAssistImpactTime = 0.20; // remaining-time threshold for impact frame
     const actionAssistRepositionSpeed = 10.2 * SCALE;
@@ -1915,10 +1805,7 @@ export async function main(): Promise<void> {
     const actionRequestTtl = 1.60; // seconds
     const actionFallingMinYSpeed = -0.2 * SCALE;
     const actionHeaderStartRange = 1.7 * SCALE;
-    const actionKickStartRange = 2.2 * SCALE;
     const actionHeaderHeightMin = 1.35 * SCALE;
-    const actionKickHeightMin = 0.75 * SCALE;
-    const actionKickHeightMax = 2.6 * SCALE;
     const actionKneeStartRange = 2.05 * SCALE;
     const actionScissorStartRange = 2.35 * SCALE;
     const actionKneeHeightMin = 0.95 * SCALE;
@@ -1953,8 +1840,6 @@ export async function main(): Promise<void> {
     const vicinityInterceptionAirMinY = 0.06 * SCALE;
     const vicinityInterceptionHeightMax = 2.90 * SCALE;
     const tableTargetY = getTableBallContactY(); // ball-center height for first contact on table top
-    const tableTargetXScale = 0.24; // tighter lateral targeting to keep shots on table
-    const tableTargetHalfWidth = 0.72 * TABLE_SCALE;
     const gravityAbs = 9.81;
     const impactWindowGrace = 0.08;
     const antiTunnelBodyRadius = 0.42 * SCALE;
@@ -2687,7 +2572,7 @@ export async function main(): Promise<void> {
       const ballSide = sideFromZ(ball.mesh.position.z);
       const phase = getPlannedPhase(player, ballSide);
       const receptionSnapshot = predictReceptionFallSnapshot(player, playerPos);
-      let ballBand = receptionSnapshot?.ballBand ?? getHeightBand(ball.mesh.position.y);
+      const ballBand = receptionSnapshot?.ballBand ?? getHeightBand(ball.mesh.position.y);
       let horizontalDist = Vector3.Distance(
         new Vector3(playerPos.x, 0, playerPos.z),
         new Vector3(ball.mesh.position.x, 0, ball.mesh.position.z),
@@ -3752,8 +3637,6 @@ export async function main(): Promise<void> {
         const mirrorLead = Math.max(0.06, Math.min(0.20, profile.impactTime * 0.7 + actionMirrorLeadTime * 0.2));
         const incomingVel = physicsBody.getLinearVelocity();
         const predictedBallForMirror = ball.mesh.position.add(incomingVel.scale(mirrorLead));
-        const actingSide: CourtSide = maxZ < 0 ? 0 : 1;
-        const receptionForecast = receptionForecastByPlayer[actingSide];
         const mirrorHint = isLimbReceptionAction(action)
           ? predictedBallForMirror
           : predictedContactBall;
@@ -5055,6 +4938,11 @@ export async function main(): Promise<void> {
       // Track previous-frame vertical velocity so bounce checks only trigger on real rebounds.
       previousBallPosition.copyFrom(ball.mesh.position);
       previousBallVelocityY = physicsBody.getLinearVelocity().y;
+    });
+
+    EventBus.on('match:restart', () => {
+      matchManager.restartMatch();
+      resetBallForServe(0);
     });
 
     // Start render loop

@@ -131,8 +131,7 @@ export function evaluateBoundary(
 /**
  * Evaluate net touch event
  */
-export function evaluateNetTouch(situation: RallySituation, playerTeam: number): RuleResult {
-  const otherTeam = playerTeam === 1 ? 2 : 1;
+export function evaluateNetTouch(situation: RallySituation, _playerTeam: number): RuleResult {
   situation.lastTouchPlayerId = -1; // Net reset touch counter
   situation.touchCount = 0;
 

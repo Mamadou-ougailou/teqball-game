@@ -1,4 +1,15 @@
 {
+  "id": "neymar",
+  "displayName": "Neymar Jr",
+  "modelPath": "assets/models/characters/neymar.glb",
+  "stats": {
+    "speed": 9.5,
+    "jump": 1.4,
+    "power": 110,
+    "spin": 98
+  },
+  "superpowerAbility": "ball-freeze",
+  "limitation": "Agile, high spin",
   "keyMap": {
     "idle":                  "idle",
     "jogForward":            "jogforward",

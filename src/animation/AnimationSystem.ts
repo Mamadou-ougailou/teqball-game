@@ -224,7 +224,7 @@ export class AnimationSystem {
     const nodeByName = new Map<string, TransformNode>();
     for (const bone of skeleton.bones) {
       const node: TransformNode | null = bone.getTransformNode?.() ??
-        (bone as any)._linkedTransformNode ?? null;
+        (bone as unknown as { _linkedTransformNode?: TransformNode })._linkedTransformNode ?? null;
       if (node) {
         nodeByName.set(node.name, node);
         // Also index without the Blender uniqueness suffix (.001, .002 …)
@@ -237,7 +237,7 @@ export class AnimationSystem {
     for (let i = 1; i < groups.length; i++) {
       let remapped = 0;
       for (const ta of groups[i].targetedAnimations) {
-        const rawName: string = (ta.target as any).name ?? '';
+        const rawName: string = (ta.target as { name?: string })?.name ?? '';
         const base = rawName.replace(/\.\d+$/, '');
         const mapped = nodeByName.get(rawName) ?? nodeByName.get(base);
         if (mapped) {
@@ -266,7 +266,7 @@ export class AnimationSystem {
       const candidates = preferred ? [preferred, ...aliases] : aliases;
       const idx = this._findBestClipIndex(
         candidates,
-        MOVEMENT_KEYS.has(key as PlayerAnimKey) ? MOVEMENT_EXCLUDES : ACTION_EXCLUDES,
+        MOVEMENT_KEYS.has(key) ? MOVEMENT_EXCLUDES : ACTION_EXCLUDES,
       );
       if (idx !== -1) {
         this._indexByKey.set(key, idx);
@@ -342,7 +342,7 @@ export class AnimationSystem {
   }
 
   /** Resolve logical key, raw name fragment, or index to a clip index. */
-  private _resolve(keyOrIndex: PlayerAnimKey | string | number): number {
+  private _resolve(keyOrIndex: PlayerAnimKey   | number): number {
     if (typeof keyOrIndex === 'number') return keyOrIndex;
 
     const direct = this._indexByKey.get(String(keyOrIndex));
@@ -363,7 +363,7 @@ export class AnimationSystem {
     return this._clips[index];
   }
 
-  getClipByKey(keyOrIndex: PlayerAnimKey | string | number): AnimationGroup | null {
+  getClipByKey(keyOrIndex: PlayerAnimKey   | number): AnimationGroup | null {
     const index = this._resolve(keyOrIndex);
     if (index < 0 || index >= this._clips.length) return null;
     return this._clips[index];
@@ -376,7 +376,7 @@ export class AnimationSystem {
     return this._clips[idx].name;
   }
 
-  hasClip(keyOrIndex: PlayerAnimKey | string | number): boolean {
+  hasClip(keyOrIndex: PlayerAnimKey   | number): boolean {
     const index = this._resolve(keyOrIndex);
     return index >= 0 && index < this._clips.length;
   }
@@ -389,7 +389,7 @@ export class AnimationSystem {
    * Play animation by logical key, exact group name fragment, or raw index.
    * If the same clip is already playing, does nothing.
    */
-  play(keyOrIndex: PlayerAnimKey | string | number, loop = true, speedRatio = 1.0, startFrameOffset = 0): void {
+  play(keyOrIndex: PlayerAnimKey   | number, loop = true, speedRatio = 1.0, startFrameOffset = 0): void {
     const index = this._resolve(keyOrIndex);
     if (index < 0 || index >= this._clips.length) return;
     if (this._activeIndex === index) {
@@ -407,8 +407,8 @@ export class AnimationSystem {
 
   /** Play a one-shot animation, then automatically revert to a loop clip. */
   playOnce(
-    keyOrIndex: PlayerAnimKey | string | number,
-    thenPlay: PlayerAnimKey | string | number = 'idle',
+    keyOrIndex: PlayerAnimKey   | number,
+    thenPlay: PlayerAnimKey   | number = 'idle',
     speedRatio = 1.0,
     onEnd?: () => void,
     startFrameOffset = 0,
@@ -438,7 +438,7 @@ export class AnimationSystem {
 
   playByIndexOnce(
     index: number,
-    thenPlay: PlayerAnimKey | string | number = 'idle',
+    thenPlay: PlayerAnimKey   | number = 'idle',
     speedRatio = 1.0,
     onEnd?: () => void,
     startFrameOffset = 0,

@@ -189,6 +189,155 @@ PlaceholderVideo('canvas-char', {
   particleCount: 35
 });
 
+/* ── AMBIENT DRONE (Web Audio API) ── */
+function createAmbientDrone() {
+   const audio = new Audio('/audio/intro.mp3');
+    audio.loop = true;
+    audio.volume = 0.35;
+    audio.play().catch(() => {}); // catch nécessaire (politique navigateur)
+
+    return {
+      fadeOut(duration = 1.5) {
+        const start = audio.volume;
+        const steps = 30;
+        const interval = (duration * 1000) / steps;
+        let i = 0;
+        const fade = setInterval(() => {
+          i++;
+          audio.volume = Math.max(0, start * (1 - i / steps));
+          if (i >= steps) { clearInterval(fade); audio.pause(); }
+        }, interval);
+      }
+    };
+}
+
+/* ── NARRATION CARDS ── */
+const NARRATION_CARDS = [
+  { text: 'Dans un monde où les lois de la physique sont brisées…', speed: 45, pause: 1800 },
+  { text: 'Deux légendes s’affrontent sur une table courbée.', speed: 50, pause: 1800 },
+  { text: 'Chaque frappe est une œuvre d’art.', speed: 60, pause: 1600 },
+  { text: 'Chaque point, une victoire sur l’impossible.', speed: 55, pause: 1700 },
+  { text: 'L’arène vous attend.', speed: 70, pause: 1200 },
+  { text: 'TEQBALL', subtext: 'ÉDITION SURRÉALISTE', speed: 85, pause: 2500, isTitle: true },
+];
+
+const _wait = ms => new Promise(r => setTimeout(r, ms));
+
+/* ── INTRO NARRATION ── */
+async function showIntroNarration(onOpaque) {
+  return new Promise(resolve => {
+    const screen   = document.getElementById('intro-screen');
+    const cardEl   = document.getElementById('intro-card');
+    const lineEl   = document.getElementById('intro-line');
+    const subEl    = document.getElementById('intro-subline');
+
+    let done = false;
+    let drone = null;
+
+    try { drone = createAmbientDrone(); } catch (_) {}
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (drone) drone.fadeOut(1.2);
+      screen.style.opacity = '0';
+      setTimeout(() => { screen.style.display = 'none'; resolve(); }, 850);
+    };
+
+    // Reveal screen
+    screen.style.opacity = '0';
+    screen.style.transition = 'opacity 0.85s ease';
+    screen.style.display = 'flex';
+    requestAnimationFrame(() => requestAnimationFrame(() => { screen.style.opacity = '1'; }));
+
+    (async () => {
+      await _wait(850);
+      if (onOpaque) onOpaque();
+
+      for (const card of NARRATION_CARDS) {
+        if (done) break;
+
+        // Reset card
+        cardEl.className = 'intro-card' + (card.isTitle ? ' title-card' : '');
+        lineEl.textContent = '';
+        lineEl.classList.remove('done');
+        subEl.textContent = '';
+        cardEl.style.opacity = '0';
+
+        await _wait(120);
+        if (done) break;
+        cardEl.style.opacity = '1';
+        await _wait(180);
+
+        // Type main text
+        for (const char of card.text) {
+          if (done) break;
+          lineEl.textContent += char;
+          await _wait(card.speed);
+        }
+        lineEl.classList.add('done');
+
+        // Type subtext (title card only)
+        if (card.subtext && !done) {
+          await _wait(340);
+          for (const char of card.subtext) {
+            if (done) break;
+            subEl.textContent += char;
+            await _wait(Math.round(card.speed * 0.6));
+          }
+        }
+
+        if (!done) await _wait(card.pause);
+
+        if (!done) {
+          cardEl.style.opacity = '0';
+          await _wait(560);
+        }
+      }
+
+      if (!done) finish();
+    })();
+  });
+}
+
+/* ── PRE-MATCH COUNTDOWN ── */
+async function showPreMatchCountdown() {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('prematch-overlay');
+    const textEl  = document.getElementById('prematch-text');
+
+    overlay.classList.add('active');
+
+    const steps = [
+      { text: 'ROUND 1', cls: 'round', ms: 1400 },
+      { text: 'PRÊT ?', cls: 'ready', ms: 950 },
+      { text: '3', cls: 'count', ms: 780 },
+      { text: '2', cls: 'count', ms: 780 },
+      { text: '1', cls: 'count', ms: 780 },
+      { text: 'JOUEZ !', cls: 'go', ms: 950 },
+    ];
+
+    (async () => {
+      for (const step of steps) {
+        textEl.className = 'prematch-text ' + step.cls;
+        textEl.textContent = step.text;
+        // Restart animation by forcing reflow
+        textEl.style.animation = 'none';
+        textEl.offsetHeight;
+        textEl.style.animation = '';
+        await _wait(step.ms);
+      }
+      textEl.style.transition = 'opacity 0.35s ease';
+      textEl.style.opacity = '0';
+      await _wait(380);
+      overlay.classList.remove('active');
+      textEl.style.opacity = '';
+      textEl.style.transition = '';
+      resolve();
+    })();
+  });
+}
+
 /* ── TRANSITION ── */
 const transitionEl = document.getElementById('transition');
 const gameScreen = document.getElementById('game-screen');
@@ -196,6 +345,24 @@ const loadingScreen = document.getElementById('loading-screen');
 const app = document.getElementById('app');
 const backBtn = document.getElementById('back-btn');
 let gameStarted = false;
+let mainLoadPromise = null;
+let gameStarting = false;
+
+/* ── PREFETCH GAME ASSETS ── */
+function prefetchGameAssets() {
+  // Start module import (parses + compiles the TS bundle while intro plays)
+  mainLoadPromise = import('/src/main.ts');
+
+  // Prefetch heavy static assets into browser cache so main() finds them instantly
+  [
+    '/HavokPhysics.wasm',
+    '/models/Neymar.glb',
+    '/models/table.glb',
+    '/models/bleachers.glb',
+    '/models/ball01.glb',
+    '/models/player.glb',
+  ].forEach(url => fetch(url).catch(() => {}));
+}
 
 function showTransition(label, callback) {
   document.getElementById('transition-text').textContent = label;
@@ -209,36 +376,37 @@ function hideTransition() {
 
 /* ── NAVIGATION ── */
 document.querySelectorAll('.nav-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
+    btn.blur();
     const action = btn.dataset.action;
     if (action === 'play') {
-      showTransition('CHARGEMENT', async () => {
-        // Show game screen with loading overlay
-        app.style.display = 'none';
-        gameScreen.classList.add('active');
-        loadingScreen.classList.add('active');
-        backBtn.style.display = 'block';
-        document.body.style.cursor = 'default';
+      if (gameStarting) return;
+      gameStarting = true;
 
-        hideTransition();
+      // Ensure main() is loaded (should be done by prefetchGameAssets during narration)
+      if (!mainLoadPromise) prefetchGameAssets();
 
-        if (!gameStarted) {
-          try {
-            // Dynamically import and start the BabylonJS game
-            const { main } = await import('/src/main.ts');
-            await main();
-            gameStarted = true;
-          } catch (err) {
-            loadingScreen.querySelector('p').textContent = 'Error: ' + (err.message || err);
-            loadingScreen.querySelector('p').style.color = '#ff6b6b';
-            console.error(err);
-            return;
-          }
-        }
+      app.style.display = 'none';
+      gameScreen.classList.add('active');
+      backBtn.style.display = 'block';
+      document.body.style.cursor = 'default';
+      loadingScreen.classList.add('active');
 
-        // Hide loading once game is ready
+      try {
+        const { main } = await mainLoadPromise;
+        await _wait(50);
+        await main();
+        gameStarted = true;
         loadingScreen.classList.remove('active');
-      });
+      } catch (err) {
+        loadingScreen.querySelector('p').textContent = 'Erreur : ' + (err.message || err);
+        loadingScreen.querySelector('p').style.color = '#ff6b6b';
+        console.error(err);
+      }
+
+      await showPreMatchCountdown();
+    } else if (action === 'characters') {
+      document.getElementById('character-select-screen').classList.add('active');
     } else {
       showTransition(btn.textContent.trim().split('\n').pop().trim().toUpperCase(), () => {
         setTimeout(() => {
@@ -248,6 +416,38 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     }
   });
 });
+
+/* ── EXPERIENCE INITIALIZATION ── */
+const startScreen = document.getElementById('start-screen');
+const startBtn = document.getElementById('btn-start-experience');
+
+if (startBtn) {
+  startBtn.addEventListener('click', async () => {
+    // 1. Hide start screen
+    startScreen.style.opacity = '0';
+    setTimeout(() => startScreen.style.display = 'none', 1000);
+
+    // 2. Start prefetching assets in background during narration
+    prefetchGameAssets();
+
+    // 3. Play narration
+    await showIntroNarration();
+
+    // 4. Show menu
+    app.style.display = 'grid';
+    app.style.opacity = '0';
+    app.style.transition = 'opacity 1s ease';
+    
+    // Force a resize event so the canvases calculate their new dimensions
+    setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+    }, 100);
+    
+    requestAnimationFrame(() => {
+      app.style.opacity = '1';
+    });
+  });
+}
 
 /* ── BACK TO MENU ── */
 backBtn.addEventListener('click', () => {
@@ -259,3 +459,80 @@ backBtn.addEventListener('click', () => {
     setTimeout(hideTransition, 200);
   });
 });
+
+/* ── CHARACTER SELECT ── */
+const charactersData = [
+  {
+    id: 'neymar',
+    name: 'Neymar Jr',
+    subtitle: 'Agile, high spin',
+    power: 'BALL-FREEZE',
+    stats: { speed: 95, jump: 40, power: 100, spin: 98 }
+  },
+  {
+    id: 'flamingo',
+    name: 'Flamingo Fury',
+    subtitle: 'Lower power, higher finesse',
+    power: 'SPEED-BURST',
+    stats: { speed: 85, jump: 30, power: 100, spin: 95 }
+  },
+  {
+    id: 'human_athlete',
+    name: 'Human Athlete',
+    subtitle: 'Balanced allrounder',
+    power: 'MEGA-BOUNCE',
+    stats: { speed: 80, jump: 20, power: 120, spin: 80 }
+  }
+];
+
+let selectedCharId = 'neymar';
+
+function initCharacterSelect() {
+  const grid = document.getElementById('cs-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  
+  charactersData.forEach(char => {
+    const card = document.createElement('div');
+    card.className = `cs-card ${char.id === selectedCharId ? 'selected' : ''}`;
+    card.innerHTML = `
+      <h4>${char.name}</h4>
+      <p>${char.subtitle}</p>
+    `;
+    card.addEventListener('click', () => {
+      document.querySelectorAll('.cs-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      selectedCharId = char.id;
+      window.selectedCharacterId = char.id; // Expose globally for main.ts
+      updateCharacterStats(char);
+    });
+    grid.appendChild(card);
+  });
+  
+  // Init first selection
+  updateCharacterStats(charactersData.find(c => c.id === selectedCharId));
+}
+
+function updateCharacterStats(char) {
+  document.getElementById('cs-char-name').textContent = char.name;
+  document.getElementById('cs-char-subtitle').textContent = char.subtitle;
+  document.getElementById('cs-power-name').textContent = char.power;
+  
+  // Reset width to 0 briefly to trigger CSS transition
+  ['speed', 'jump', 'power', 'spin'].forEach(stat => {
+    document.getElementById(`stat-${stat}`).style.width = '0%';
+  });
+  
+  setTimeout(() => {
+    document.getElementById('stat-speed').style.width = char.stats.speed + '%';
+    document.getElementById('stat-jump').style.width = char.stats.jump + '%';
+    document.getElementById('stat-power').style.width = (char.stats.power/1.5) + '%';
+    document.getElementById('stat-spin').style.width = char.stats.spin + '%';
+  }, 50);
+}
+
+document.getElementById('cs-back-btn')?.addEventListener('click', () => {
+  document.getElementById('character-select-screen').classList.remove('active');
+});
+
+initCharacterSelect();
