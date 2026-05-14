@@ -1,4 +1,5 @@
 import { Vector3, Quaternion } from '@babylonjs/core/Maths/math.vector';
+import { ICharacter, CharacterState, GameAction, CharacterStats } from '@core/interfaces';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';

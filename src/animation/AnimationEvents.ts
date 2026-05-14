@@ -44,7 +44,7 @@ export class AnimationEvents implements IEntity {
     onlyOnce = false
   ): void {
     const config: FrameEventConfig = { stateName, frameNumber, eventName, onlyOnce };
-    const group = this.animSystem.getAnimationGroup(stateName);
+    const group = this.animSystem.getClipByKey(stateName as never);
 
     if (!group || group.targetedAnimations.length === 0) {
       // Group not ready yet — store for deferred registration
@@ -61,7 +61,7 @@ export class AnimationEvents implements IEntity {
    */
   flushPending(): void {
     this.pending = this.pending.filter(config => {
-      const group = this.animSystem.getAnimationGroup(config.stateName);
+      const group = this.animSystem.getClipByKey(config.stateName as never);
       if (!group || group.targetedAnimations.length === 0) return true; // keep pending
       this.attachEvent(config, group);
       return false;
