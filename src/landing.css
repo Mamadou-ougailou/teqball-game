@@ -415,6 +415,14 @@ html, body {
   background: #000;
 }
 
+/* Canvas visible but invisible to user during background preload */
+#game-screen.preloading {
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
 #game-screen.active {
   display: block;
 }

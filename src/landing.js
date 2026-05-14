@@ -346,22 +346,26 @@ const app = document.getElementById('app');
 const backBtn = document.getElementById('back-btn');
 let gameStarted = false;
 let mainLoadPromise = null;
+let preloadPromise = null;   // resolves when full scene is ready
 let gameStarting = false;
 
 /* ── PREFETCH GAME ASSETS ── */
 function prefetchGameAssets() {
-  // Start module import (parses + compiles the TS bundle while intro plays)
+  // Import + compile the TS bundle
   mainLoadPromise = import('/src/main.ts');
 
-  // Prefetch heavy static assets into browser cache so main() finds them instantly
-  [
-    '/HavokPhysics.wasm',
-    '/models/Neymar.glb',
-    '/models/table.glb',
-    '/models/bleachers.glb',
-    '/models/ball01.glb',
-    '/models/player.glb',
-  ].forEach(url => fetch(url).catch(() => {}));
+  // Add `preloading` so #game-screen is display:block (canvas gets real dimensions)
+  // but opacity:0/z-index:-1 so the user never sees it during the intro.
+  gameScreen.classList.add('preloading');
+
+  // Kick off the full scene preload (Havok init, GLB loading, physics setup…)
+  // while the intro narration plays.  By the time the user clicks Play it's done.
+  preloadPromise = mainLoadPromise
+    .then(mod => mod.preloadGame())
+    .catch(err => {
+      console.warn('[preload] background preload failed, will retry on Play:', err);
+      preloadPromise = null;
+    });
 }
 
 function showTransition(label, callback) {
@@ -383,22 +387,42 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       if (gameStarting) return;
       gameStarting = true;
 
-      // Ensure main() is loaded (should be done by prefetchGameAssets during narration)
+      // If prefetchGameAssets() was never called (e.g. user skipped intro), start now
       if (!mainLoadPromise) prefetchGameAssets();
 
       app.style.display = 'none';
-      gameScreen.classList.add('active');
       backBtn.style.display = 'block';
       document.body.style.cursor = 'default';
-      loadingScreen.classList.add('active');
 
       try {
-        const { main } = await mainLoadPromise;
-        await _wait(50);
-        await main();
+        const mod = await mainLoadPromise;
+
+        if (!preloadPromise) {
+          // Preload didn't start yet — show loading screen while it runs
+          loadingScreen.classList.add('active');
+          preloadPromise = mod.preloadGame();
+        }
+
+        // If preload is still in progress, show a lightweight loading indicator
+        const isReady = await Promise.race([
+          preloadPromise.then(() => true),
+          Promise.resolve(false),
+        ]);
+        if (!isReady) {
+          loadingScreen.classList.add('active');
+          await preloadPromise;
+        }
+
+        // Scene is fully loaded — switch from invisible preloading to active
+        gameScreen.classList.remove('preloading');
+        gameScreen.classList.add('active');
+        mod.startGame();
         gameStarted = true;
         loadingScreen.classList.remove('active');
       } catch (err) {
+        gameScreen.classList.remove('preloading');
+        gameScreen.classList.add('active');
+        loadingScreen.classList.add('active');
         loadingScreen.querySelector('p').textContent = 'Erreur : ' + (err.message || err);
         loadingScreen.querySelector('p').style.color = '#ff6b6b';
         console.error(err);

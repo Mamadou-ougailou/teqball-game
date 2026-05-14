@@ -81,6 +81,7 @@ import {
 } from './config/GameConfig';
 
 let gameScene: Scene;
+let _babylonEngine: BabylonEngine | null = null;
 let assetManager: AssetManager;
 let ball: Ball;
 let player1: Character;
@@ -161,6 +162,7 @@ export async function main(): Promise<void> {
 
     const { engine, scene, camera, havokPlugin } = await SceneBuilder.createSurrealisticScene(canvas);
     gameScene = scene;
+    _babylonEngine = engine;
     const hk = (havokPlugin as unknown as { _hknp?: Record<string, (...a: unknown[]) => unknown> })._hknp;
 
     // Camera follows the ball target subtly (not a hard chase cam).
@@ -4945,13 +4947,12 @@ export async function main(): Promise<void> {
       resetBallForServe(0);
     });
 
-    // Start render loop
-    engine.render(gameScene);
-
-    // Handle window resize
-    window.addEventListener('resize', () => {
-      engine.getNativeEngine().resize();
-    });
+    // Render loop is started by startGame() — deferred so landing.js
+    // can preload the scene during intro and start rendering only on Play.
+    if (!(window as Window & { __deferGameStart?: boolean }).__deferGameStart) {
+      engine.render(gameScene);
+      window.addEventListener('resize', () => engine.getNativeEngine().resize());
+    }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
     const loadingScreen = document.getElementById('loading-screen');
@@ -4959,6 +4960,29 @@ export async function main(): Promise<void> {
       loadingScreen.innerHTML = `<p style="color: #ff6b6b;">Error: ${errorMsg}</p>`;
     }
   }
+}
+
+/**
+ * Preloads the entire game scene (Havok, GLBs, physics, game logic) in the
+ * background while the landing intro plays.  The canvas must be in the DOM
+ * with non-zero dimensions when this is called (landing.js adds the
+ * `preloading` CSS class to #game-screen for this).
+ */
+export async function preloadGame(): Promise<void> {
+  (window as Window & { __deferGameStart?: boolean }).__deferGameStart = true;
+  await main();
+}
+
+/**
+ * Starts the render loop after preloadGame() has completed.
+ * Called by landing.js the instant the user clicks Play.
+ */
+export function startGame(): void {
+  if (!_babylonEngine || !gameScene) {
+    throw new Error('startGame() called before preloadGame() completed');
+  }
+  _babylonEngine.render(gameScene);
+  window.addEventListener('resize', () => _babylonEngine!.getNativeEngine().resize());
 }
 
 
