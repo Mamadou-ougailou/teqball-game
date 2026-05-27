@@ -2,7 +2,7 @@ import { IMatchManager } from '@core/interfaces';
 import { EventBus } from '@core/EventBus';
 import { POINTS_PER_SET, SETS_TO_WIN } from './constants';
 
-const SERVICE_CHANGE_EVERY = 4; // points per serve block
+const SERVICE_CHANGE_EVERY = 1; // server alternates every rally (every point)
 
 /**
  * MatchManager - Handles scoring, sets, serve rotation
@@ -14,7 +14,7 @@ export class MatchManager implements IMatchManager {
   private _isMatchActive = true;
   private _winner: number | null = null;
 
-  // 4-point serve rotation
+  // Serve-rotation bookkeeping
   private _setStartServer = 0;
   private _totalSetPoints = 0;
 
@@ -51,15 +51,15 @@ export class MatchManager implements IMatchManager {
     this._totalSetPoints += 1;
     this._consecutiveFailedServes = 0;
 
-    // 4-point rotation: server flips every SERVICE_CHANGE_EVERY total points in set
+    // Server alternates every SERVICE_CHANGE_EVERY points (currently 1 = every rally)
     this._currentServer = (this._setStartServer + Math.floor(this._totalSetPoints / SERVICE_CHANGE_EVERY)) % 2;
 
     const points0 = this._score[0];
     const points1 = this._score[1];
 
-    // Win-by-2 rule
-    const team0WonSet = points0 >= POINTS_PER_SET && points0 - points1 >= 2;
-    const team1WonSet = points1 >= POINTS_PER_SET && points1 - points0 >= 2;
+    // First to POINTS_PER_SET wins the set (no win-by-2 required)
+    const team0WonSet = points0 >= POINTS_PER_SET;
+    const team1WonSet = points1 >= POINTS_PER_SET;
 
     if (team0WonSet || team1WonSet) {
       const winningTeam = team0WonSet ? 0 : 1;

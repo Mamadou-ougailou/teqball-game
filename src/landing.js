@@ -1,3 +1,23 @@
+/* ── DEBUG MODE: skip landing page ── */
+const __debugMode = new URLSearchParams(window.location.search).has('debug');
+if (__debugMode) {
+  // Show game screen immediately — without this it stays display:none and
+  // the canvas has zero dimensions, causing Babylon to fail silently.
+  const _dbgScreen = document.getElementById('game-screen');
+  if (_dbgScreen) _dbgScreen.classList.add('active');
+  const _dbgStart = document.getElementById('start-screen');
+  if (_dbgStart) _dbgStart.style.display = 'none';
+  const _dbgIntro = document.getElementById('intro-screen');
+  if (_dbgIntro) _dbgIntro.style.display = 'none';
+  (async () => {
+    const mod = await import('/src/main.ts');
+    await mod.main();
+  })();
+} else {
+  initLandingPage();
+}
+
+function initLandingPage() {
 /* ── CUSTOM CURSOR ── */
 const cursor = document.getElementById('cursor');
 const ring = document.getElementById('cursor-ring');
@@ -490,29 +510,22 @@ backBtn.addEventListener('click', () => {
 /* ── CHARACTER SELECT ── */
 const charactersData = [
   {
-    id: 'neymar',
-    name: 'Neymar Jr',
-    subtitle: 'Agile, high spin',
-    power: 'BALL-FREEZE',
-    stats: { speed: 95, jump: 40, power: 100, spin: 98 }
-  },
-  {
-    id: 'flamingo',
-    name: 'Flamingo Fury',
+    id: 'maradona',
+    name: 'Maradona',
     subtitle: 'Lower power, higher finesse',
     power: 'SPEED-BURST',
     stats: { speed: 85, jump: 30, power: 100, spin: 95 }
   },
   {
-    id: 'human_athlete',
-    name: 'Human Athlete',
+    id: 'howard',
+    name: 'Howard',
     subtitle: 'Balanced allrounder',
     power: 'MEGA-BOUNCE',
     stats: { speed: 80, jump: 20, power: 120, spin: 80 }
   }
 ];
 
-let selectedCharId = 'neymar';
+let selectedCharId = 'howard';
 
 function initCharacterSelect() {
   const grid = document.getElementById('cs-grid');
@@ -563,3 +576,4 @@ document.getElementById('cs-back-btn')?.addEventListener('click', () => {
 });
 
 initCharacterSelect();
+} // ← end initLandingPage()

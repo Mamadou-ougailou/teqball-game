@@ -13,7 +13,8 @@ type GameplayAction =
   | 'receptionChest' | 'receptionToe' | 'receptionInnerRight'
   | 'prepChest' | 'prepInnerRight'
   | 'kickCloseHead' | 'kickCloseRightFoot' | 'kickHead'
-  | 'kickHighLeft' | 'kickJumpHead' | 'kickSoleRight' | 'kickBicycleLeft' | 'kickChest';
+  | 'kickHighLeft' | 'kickJumpHead' | 'kickSoleRight' | 'kickBicycleLeft' | 'kickChest'
+  | 'leftHeadKick' | 'rightHeadKick' | 'centerHeadKick';
 
 type ActionDefinition = {
   clipKey: PlayerAnimKey  ;
@@ -82,18 +83,24 @@ export class Character implements ICharacter {
     ['header', 0],
     ['hearserve', 0],
     ['serveleftfoot', 60],
+    ['serverightfoot', 60],
     ['serve', 0],
     ['chestkick', 180],
     ['chestreception', 180],
+    ['chestprepleft', 180],
+    ['chestprepright', 180],
     ['jogforward001', 0],
     ['closetablelowheadkick', 180],
     ['closetablerightfootkick', 0],
     ['highkickleftfoot', 180],
+    ['leftfootkick', 180],
     ['jumpheadkick', 180],
     ['solerightfootkick', 0],
     ['bicycle', 180],
     ['righttoefootreception', 5],
     ['rightkneereception', 0],
+    ['leftkneereception', 0],
+    ['innerleftfootreception', 0],
     ['innerrightfootreception', 0],
     ['bridgereceptionleftfoot', 0],
     ['bridgereceptionrightfoot', 0],
@@ -482,19 +489,21 @@ export class Character implements ICharacter {
     this._state = CharacterState.MOVING;
     const clampedSpeed = Math.max(0.78, Math.min(1.40, locomotionSpeed));
     const startupTrim = this._getStartupTrimFrames(desired);
+    // Locomotion clips must never rotate the player away from their gameplay
+    // facing direction (getCourtCenterFacing). Zero the compensation so that
+    // root.rotation.y = motion.facing + PLAYER_MODEL_YAW_OFFSET always.
+    this._animationFacingCompensationYaw = 0;
     if (this._locomotionAnim !== desired) {
       this._locomotionAnim = desired;
-      this._setFacingCompensationForKey(desired);
       this._anim.play(desired, true, clampedSpeed, startupTrim);
       return;
     }
 
     // Keep current clip phase but continuously update playback speed.
-    this._setFacingCompensationForKey(desired);
     this._anim.play(desired, true, clampedSpeed, startupTrim);
   }
 
-  performAirAction(action: GameplayAction, ballPosition?: Vector3, mirrorX = false): boolean {
+  performAirAction(action: GameplayAction, ballPosition?: Vector3, mirrorX = false, speedRatio?: number): boolean {
     if (!this._anim || this._kickTimer > 0) {
       return false;
     }
@@ -510,7 +519,7 @@ export class Character implements ICharacter {
 
     const animConfig = getAnimConfigForClip(String(clipKey));
 
-    const actionSpeedRatio = Character.ACTION_ANIM_SPEED_RATIO;
+    const actionSpeedRatio = speedRatio ?? Character.ACTION_ANIM_SPEED_RATIO;
     this._kickTimer = this._computeActionLockSeconds(animConfig, timer, actionSpeedRatio);
     this._currentActionKey = action;
     this._currentStrikeBone = strikeBone;
@@ -518,20 +527,27 @@ export class Character implements ICharacter {
     this._currentAnimConfig = animConfig;
     this._idleReturnRotationOffsetYaw = ((animConfig?.idleReturnRotY ?? 0) * Math.PI) / 180;
 
-    let shouldMirror = mirrorX;
     if (animConfig && !animConfig.mirrorSafe) {
       autoMirrorByFoot = false;
-      shouldMirror = false;
     }
-    if (autoMirrorByFoot) {
+
+    // Determine whether to mirror the animation to match the geometrically
+    // closer foot socket.  Only enabled when the clip is mirrorSafe so it can
+    // tolerate an X-flip without tearing the rig.
+    let shouldMirror = false;
+    if (autoMirrorByFoot && animConfig?.mirrorSafe) {
       const isLeftFootCloser = ballPosition ? this._isLeftFootCloser(ballPosition) : false;
       this._activeFootSide = isLeftFootCloser ? 'left' : 'right';
-      shouldMirror = mirrorX || isLeftFootCloser;
+
+      // activeBone tells us which socket kicks in the non-mirrored version.
+      // Mirror when the geometrically closer socket doesn't match the default.
+      const activeBoneLower = (animConfig.activeBone ?? '').toLowerCase();
+      const defaultIsRight = activeBoneLower.includes('right');
+      const defaultIsLeft  = !defaultIsRight && activeBoneLower.includes('left');
+      if (defaultIsRight && isLeftFootCloser) shouldMirror = true;
+      if (defaultIsLeft  && !isLeftFootCloser) shouldMirror = true;
     } else {
       this._activeFootSide = 'center';
-      if (forceMirror !== null) {
-        shouldMirror = forceMirror;
-      }
     }
 
     // Preserve external gameplay facing (table-facing) before clip-specific
@@ -738,8 +754,7 @@ export class Character implements ICharacter {
 
   /** Force a specific animation by key (for scripted sequences). */
   playAnimation(key: PlayerAnimKey  , loop = true, mirrorX = false, onEnd?: () => void): void {
-    const effectiveMirror = mirrorX !== this._needsAutoMirrorByKey(key);
-    this._setMirrorX(effectiveMirror);
+    this._setMirrorX(false);
     this._setFacingCompensationForKey(key);
     const startupTrim = this._getStartupTrimFrames(key);
     if (loop) {
@@ -763,6 +778,11 @@ export class Character implements ICharacter {
   }
 
   getMirrorFacingCompensationYaw(): number {
+    // mirrorSafe clips are authored in their final court-facing orientation.
+    // An X-flip mirrors the leg side without needing a yaw compensation.
+    if (this._currentAnimConfig?.mirrorSafe) {
+      return 0;
+    }
     // Keep legacy/global behavior for all animations so serve and other clips
     // preserve their authored facing. Only suppress mirror-yaw for inner-foot
     // reception variants, which otherwise turn side/back.
@@ -776,7 +796,12 @@ export class Character implements ICharacter {
   }
 
   getAnimationFacingCompensationYaw(): number {
-    return this._animationFacingCompensationYaw;
+    // The model's gameplay facing (getCourtCenterFacing) already points the
+    // character toward the table center at all times.  Applying per-clip
+    // facing compensation on top of that causes animations to spin the
+    // player away from the table.  Always return 0 so the root rotation is
+    // solely driven by motion.facing + PLAYER_MODEL_YAW_OFFSET.
+    return 0;
   }
 
   getHeadControlPosition(): Vector3 {
@@ -827,9 +852,33 @@ export class Character implements ICharacter {
     return hit.bone.getAbsolutePosition(this.mesh);
   }
 
+  /** Returns the world position of the left or right foot bone (for foot-serve contact anchoring). */
+  getFootControlPosition(side: 'left' | 'right'): Vector3 {
+    const fallbackLocal = new Vector3(side === 'right' ? 0.12 : -0.12, 0.08, 0.10);
+    if (!this.skeleton) {
+      return Vector3.TransformCoordinates(fallbackLocal, this.mesh.getWorldMatrix());
+    }
+
+    const names = this.skeleton.bones.map(b => ({
+      bone: b,
+      key: b.name.toLowerCase().replace(/[._\s-]/g, ''),
+    }));
+
+    const hasAll = (name: string, parts: string[]): boolean => parts.every(p => name.includes(p));
+    const hit =
+      names.find(n => hasAll(n.key, [`${side}foot`])) ??
+      names.find(n => hasAll(n.key, [`${side}`, 'foot'])) ??
+      names.find(n => hasAll(n.key, [`${side}`, 'toe'])) ??
+      names.find(n => n.key.includes('foot'));
+
+    if (!hit) {
+      return Vector3.TransformCoordinates(fallbackLocal, this.mesh.getWorldMatrix());
+    }
+    return hit.bone.getAbsolutePosition(this.mesh);
+  }
+
   playAnimationClipByIndex(index: number, loop = false, mirrorX = false, speedRatio = 1.0, onEnd?: () => void): void {
-    const effectiveMirror = mirrorX !== this._needsAutoMirrorByClipIndex(index);
-    this._setMirrorX(effectiveMirror);
+    this._setMirrorX(false);
     const clipName = this._anim?.getClipNames()?.[index];
     if (clipName) {
       this._setFacingCompensationForKey(clipName);
@@ -844,6 +893,65 @@ export class Character implements ICharacter {
 
   getCurrentAnimation(): string {
     return String(this._anim?.activeIndex ?? -1);
+  }
+
+  /** Current frame of the active animation group, in clip-native units (null if idle). */
+  getActiveAnimationFrame(): number | null {
+    return this._anim?.getActiveMasterFrame() ?? null;
+  }
+
+  /** Active clip's `from` frame, or null if no clip is playing. */
+  getActiveAnimationFrom(): number | null {
+    return this._anim?.getActiveClipFrom() ?? null;
+  }
+
+  /**
+   * Seeks the active animation to `absoluteFrame`, reads the hand bone
+   * world-position, then restores to `restoreFrame`.
+   * Used to snapshot the exact hand position at the first serve-animation frame
+   * so the ballistic toss arc starts from the correct pose (not idle).
+   */
+  sampleHandPositionAtFrame(
+    absoluteFrame: number,
+    restoreFrame: number,
+    hand: 'left' | 'right',
+  ): Vector3 | null {
+    const group = this._anim?.getActiveGroup();
+    if (!group) return null;
+    group.goToFrame(absoluteFrame);
+    this.mesh.computeWorldMatrix(true);
+    const result = this.getHandControlPosition(hand).clone();
+    group.goToFrame(restoreFrame);
+    this.mesh.computeWorldMatrix(true);
+    return result;
+  }
+
+  /**
+   * Temporarily seeks the active animation to `absoluteFrame`, reads the
+   * foot or head bone world-position, then restores to `restoreFrame`.
+   * Used by the serve system to sample where the strike bone will be at the
+   * contact frame so a ballistic arc can be pre-computed.
+   * Returns null if no animation is currently active.
+   */
+  sampleServeBoneAtFrame(
+    absoluteFrame: number,
+    restoreFrame: number,
+    isFootServe: boolean,
+    foot: 'left' | 'right',
+  ): Vector3 | null {
+    const group = this._anim?.getActiveGroup();
+    if (!group) return null;
+
+    group.goToFrame(absoluteFrame);
+    this.mesh.computeWorldMatrix(true);
+    const sampled = isFootServe
+      ? this.getFootControlPosition(foot)
+      : this.getHeadControlPosition();
+    const result = sampled ? sampled.clone() : null;
+
+    group.goToFrame(restoreFrame);
+    this.mesh.computeWorldMatrix(true);
+    return result;
   }
 
   setInputAction(_action: GameAction, _isPressed: boolean): void {}

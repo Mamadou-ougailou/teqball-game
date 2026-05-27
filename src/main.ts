@@ -37,7 +37,6 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
-import { GlowLayer } from '@babylonjs/core/Layers/glowLayer';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import { Ball } from './entities/Ball';
 import { Character } from './entities/Character';
@@ -58,10 +57,12 @@ import {
   resolveAnimReachUnits,
 } from './data/animationConfig';
 import { InputManager } from './systems/InputManager';
-import neymarAnimData from './data/characters/neymar.json';
+import { BallPredictor } from './systems/BallPredictor';
+import { PlayerAnimKey } from './animation/AnimationSystem';
+import howardAnimData from './data/characters/howard.json';
 
 import {
-  SCALE, DOUBLE_TAP_WINDOW_MS, P1_KICK_GRACE_MS, KICK_CHARGE_TABLE,
+  SCALE, DOUBLE_TAP_WINDOW_MS,
   BALL_SPAWN_POSITION, BALL_MAX_UPWARD_SPEED, BALL_MAX_DOWNWARD_SPEED,
   BALL_RESET_HEIGHT, BALL_RESET_MIN_Y, BALL_RESET_X_LIMIT, BALL_RESET_Z_LIMIT,
   PLAYER_MODEL_YAW_OFFSET, ENABLE_P1_AI, ENABLE_P2_AI, SERVE_LINE_Z,
@@ -77,7 +78,7 @@ import {
   SERVE_TOSS_RIGHT_ANGLE_DEG, SERVE_TOSS_FORWARD_ANGLE_DEG,
   SERVE_TOSS_HEIGHT_MULT, SERVE_TOSS_CONTACT_RIGHT_MAX,
   SERVE_TOSS_CONTACT_FORWARD_MAX, CourtSide, OffensiveAction,
-  SOCKET_HEIGHT_CALIBRATION_ACTIONS, ServePhase, ServeState
+  SOCKET_HEIGHT_CALIBRATION_ACTIONS, ServePhase, ServeState, ServeType
 } from './config/GameConfig';
 
 let gameScene: Scene;
@@ -113,22 +114,19 @@ let lastP2LiftPress = 0;
 let lastP1ActionPress = 0;
 let lastP2ActionPress = 0;
 
+let lastP1KickButtonPress = 0;
 let lastP2KickButtonPress = 0;
 let p1KickButtonHeld = false;
 let p2KickButtonHeld = false;
+let p1ForcedKickAction: OffensiveAction | null = null;
 
 const pendingPrepSuperHigh: [boolean, boolean] = [false, false];
 const pendingKickPowerBoost: [boolean, boolean] = [false, false];
 // D-pad aim snapshot captured at the moment the human player presses the kick button.
 // x: -1 (left) / 0 (center) / +1 (right), z: -1 (near/net) / 0 / +1 (far/deep)
 const p1KickAim = { x: 0, z: 0 };
-// Hold-to-charge: timestamp (ms) when Space was pressed, -1 = not charging.
-let p1KickChargeStart = -1;
 // Grace-period auto-kick: timestamp (ms) when the kick phase started for P1, -1 = not counting.
 let p1KickGraceStart = -1;
-
-// Power multiplier consumed at kick-hit time (set on Space release).
-const p1KickPowerMult = { value: 1.0 };
 
 let animationPreviewMode = false;
 let animationPreviewPlayer = 1;
@@ -139,6 +137,114 @@ let animationPreviewFacingFlip = false;
 let animationPreviewLockedYaw: number | null = null;
 
 
+// Persistent serve-type preference per player — survives point resets.
+// Default: P1 uses right-foot, P2 uses left-foot (mirrors their default stance).
+let p1ServeType: ServeType = 'rightFoot';
+let p2ServeType: ServeType = 'leftFoot';
+
+const SERVE_TYPE_ORDER: ServeType[] = ['leftFoot', 'rightFoot', 'headLeft', 'headRight'];
+const SERVE_TYPE_LABEL: Record<ServeType, string> = {
+  leftFoot:  '← Foot',
+  rightFoot: 'Foot →',
+  headLeft:  '← Head',
+  headRight: 'Head →',
+};
+
+// ── Serve-type selector HUD ──────────────────────────────────────────────────
+let _serveSelectorEl: HTMLDivElement | null = null;
+let _serveSelectorItems: Array<{ el: HTMLDivElement; type: ServeType }> = [];
+let _serveSelectorVisible = false;
+let _serveSelectorActiveType: ServeType | null = null;
+
+function initServeSelectorUI(): void {
+  const root = document.createElement('div');
+  Object.assign(root.style, {
+    position: 'fixed',
+    bottom: '40px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    display: 'none',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: '6px',
+    background: 'rgba(0,0,0,0.60)',
+    backdropFilter: 'blur(6px)',
+    borderRadius: '12px',
+    padding: '8px 16px',
+    fontFamily: 'Inter, Arial, sans-serif',
+    zIndex: '200',
+    pointerEvents: 'none',
+    userSelect: 'none',
+    boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
+  });
+
+  // "Q →" cycle hint badge
+  const hint = document.createElement('div');
+  hint.textContent = 'Q';
+  Object.assign(hint.style, {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: '10px',
+    fontWeight: '600',
+    border: '1px solid rgba(255,255,255,0.25)',
+    borderRadius: '4px',
+    padding: '2px 6px',
+    marginRight: '6px',
+    letterSpacing: '0.03em',
+  });
+  root.appendChild(hint);
+
+  _serveSelectorItems = [];
+  for (const type of SERVE_TYPE_ORDER) {
+    const pill = document.createElement('div');
+    pill.textContent = SERVE_TYPE_LABEL[type];
+    Object.assign(pill.style, {
+      color: 'rgba(255,255,255,0.30)',
+      fontSize: '13px',
+      fontWeight: '600',
+      padding: '5px 13px',
+      borderRadius: '8px',
+      border: '1px solid transparent',
+      letterSpacing: '0.02em',
+      whiteSpace: 'nowrap',
+    });
+    root.appendChild(pill);
+    _serveSelectorItems.push({ el: pill, type });
+  }
+
+  document.body.appendChild(root);
+  _serveSelectorEl = root;
+}
+
+function updateServeSelectorUI(activeType: ServeType, visible: boolean): void {
+  if (!_serveSelectorEl) return;
+  if (visible !== _serveSelectorVisible || activeType !== _serveSelectorActiveType) {
+    _serveSelectorVisible = visible;
+    _serveSelectorActiveType = activeType;
+    _serveSelectorEl.style.display = visible ? 'flex' : 'none';
+    if (visible) {
+      for (const { el, type } of _serveSelectorItems) {
+        const active = type === activeType;
+        el.style.color    = active ? '#ffffff' : 'rgba(255,255,255,0.30)';
+        el.style.background = active ? 'rgba(255,255,255,0.15)' : 'transparent';
+        el.style.border   = active ? '1px solid rgba(255,255,255,0.35)' : '1px solid transparent';
+      }
+    }
+  }
+}
+
+/** Derive the anim key, foot, and hand from a ServeType + its animConfig. */
+function serveTypeToProps(type: ServeType): { animKey: PlayerAnimKey; foot: 'left' | 'right'; hand: 'left' | 'right' } {
+  const animKey: PlayerAnimKey =
+    type === 'leftFoot'  ? 'serveLeft'     :
+    type === 'rightFoot' ? 'serveRight'    :
+    type === 'headLeft'  ? 'headServeLeft' :
+                           'headServeRight';
+  const cfg = getAnimConfigForClip(animKey);
+  const foot: 'left' | 'right' = (type === 'leftFoot' || type === 'headLeft') ? 'left' : 'right';
+  const hand: 'left' | 'right' = cfg?.serveHand ?? (foot === 'left' ? 'right' : 'left');
+  return { animKey, foot, hand };
+}
+
 const serveState: ServeState = {
   active: false,
   server: 0,
@@ -147,9 +253,26 @@ const serveState: ServeState = {
   tossReleased: false,
   strikeApplied: false,
   animationStarted: false,
+  serveType: p1ServeType,
   foot: 'right',
   hand: 'left',
+  tossBallTarget: null,
+  tossStartPos: null,
 };
+
+// Grace period (seconds) during which queueAutoAction is suppressed after a
+// serve completes, preventing immediate unwanted reception animations on the
+// serving player before the rally has properly resumed.
+let postServeGraceTimer = 0;
+const POST_SERVE_GRACE_SECONDS = 1.4;
+
+// Per-player timers that keep setMovement locked for the full duration of the
+// serve animation clip, independent of serveState.active.  The physics state
+// machine can deactivate the serve (missed contact window) well before the
+// kick frame is reached; without this lock the animation is overwritten by
+// a locomotion clip the very next frame.
+let p1ServeAnimLockTimer = 0;
+let p2ServeAnimLockTimer = 0;
 
 export async function main(): Promise<void> {
   try {
@@ -160,7 +283,8 @@ export async function main(): Promise<void> {
     }
     const canvas = canvasElement;
 
-    const { engine, scene, camera, havokPlugin } = await SceneBuilder.createSurrealisticScene(canvas);
+    const isDebug = new URLSearchParams(window.location.search).has('debug');
+    const { engine, scene, camera, havokPlugin } = await SceneBuilder.createSurrealisticScene(canvas, { debug: isDebug });
     gameScene = scene;
     _babylonEngine = engine;
     const hk = (havokPlugin as unknown as { _hknp?: Record<string, (...a: unknown[]) => unknown> })._hknp;
@@ -435,15 +559,28 @@ export async function main(): Promise<void> {
       if (!ball?.mesh?.physicsBody) return;
 
       const v = ball.mesh.physicsBody.getLinearVelocity();
-      const wx = v.z / Math.max(0.001, ballRadius);
-      const wz = -v.x / Math.max(0.001, ballRadius);
 
-      // Arcade-readability spin: roll follows velocity + controllable side-spin.
-      ballRootMesh.rotation.x += wx * deltaTime * 0.85;
-      ballRootMesh.rotation.z += wz * deltaTime * 0.85;
-      ballRootMesh.rotation.y += ballSpinTwist * deltaTime * 0.25;
+      if (PURE_BALL_PHYSICS) {
+        // In pure-physics mode Havok computes realistic angular velocity from
+        // friction contacts.  Drive the visual mesh rotation directly from it
+        // so the ball visually rolls, spins and curves exactly as the physics dictates.
+        const ang = ball.mesh.physicsBody.getAngularVelocity();
+        // Clamp to a sane display range so extreme Havok impulses don't
+        // make the mesh flicker; the physics body keeps its true value.
+        const clamp = (x: number): number => Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, x));
+        ballRootMesh.rotation.x += clamp(ang.x) * deltaTime;
+        ballRootMesh.rotation.z += clamp(ang.z) * deltaTime;
+        // y-axis (side-spin / slice) blends physics yaw + arcade twist for extra readability.
+        ballRootMesh.rotation.y += (clamp(ang.y) + ballSpinTwist * 0.15) * deltaTime;
+      } else {
+        // Arcade / assist mode: derive spin from linear velocity so the ball
+        // always appears to roll in the direction of travel regardless of physics.
+        const wx = v.z / Math.max(0.001, ballRadius);
+        const wz = -v.x / Math.max(0.001, ballRadius);
+        ballRootMesh.rotation.x += wx * deltaTime * 0.85;
+        ballRootMesh.rotation.z += wz * deltaTime * 0.85;
+        ballRootMesh.rotation.y += ballSpinTwist * deltaTime * 0.25;
 
-      if (!PURE_BALL_PHYSICS) {
         const ang = ball.mesh.physicsBody.getAngularVelocity();
         const targetAng = new Vector3(
           Math.max(-BALL_VISUAL_SPIN_MAX, Math.min(BALL_VISUAL_SPIN_MAX, wx * 0.22)),
@@ -605,6 +742,7 @@ export async function main(): Promise<void> {
         serveState.active = false;
         serveState.phase = 'ready';
         serveState.timer = 0;
+        postServeGraceTimer = POST_SERVE_GRACE_SECONDS;
       }
     };
 
@@ -626,9 +764,10 @@ export async function main(): Promise<void> {
       }
 
       const serverSide: CourtSide = server === 0 ? 0 : 1;
-      const serveConfig = getAnimConfigForClip('serve');
-      const foot: 'left' | 'right' = serverSide === 0 ? 'right' : 'left';
-      const hand: 'left' | 'right' = serveConfig?.serveHand ?? 'left';
+      // Restore the persistent serve-type preference for this player.
+      const serveType: ServeType = serverSide === 0 ? p1ServeType : p2ServeType;
+      const { animKey: serveAnimKey, foot, hand } = serveTypeToProps(serveType);
+      const serveConfig = getAnimConfigForClip(serveAnimKey);
       serveState.active = true;
       serveState.server = serverSide;
       serveState.phase = 'ready';
@@ -636,8 +775,11 @@ export async function main(): Promise<void> {
       serveState.tossReleased = false;
       serveState.strikeApplied = false;
       serveState.animationStarted = false;
+      serveState.serveType = serveType;
       serveState.foot = foot;
       serveState.hand = hand;
+      serveState.tossBallTarget = null;
+      serveState.tossStartPos = null;
 
       const servingPlayer = server === 0 ? charRoot1 : charRoot2;
       const receivingPlayer = server === 0 ? charRoot2 : charRoot1;
@@ -818,12 +960,17 @@ export async function main(): Promise<void> {
       bridgereceptionrightfoot: { startYawDeg: 90, mirrorStartYawDeg: 90, endYawDeg: 5, mirrorEndYawDeg: 5 },
       chestkick: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       chestreception: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
+      chestprepleft: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
+      chestprepright: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       closetablelowheadkick: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       closetablelowheadkick001: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       closetablerightfootkick: { startYawDeg: 0, mirrorStartYawDeg: 0, endYawDeg: 5, mirrorEndYawDeg: 5 },
       headkick: { startYawDeg: 0, mirrorStartYawDeg: 0, endYawDeg: 5, mirrorEndYawDeg: 5 },
       hearserve: { startYawDeg: 0, mirrorStartYawDeg: 0, endYawDeg: 5, mirrorEndYawDeg: 5 },
+      innerleftfootreception: { startYawDeg: 45, mirrorStartYawDeg: -135, endYawDeg: 5, mirrorEndYawDeg: 5 },
+      innerrightfootreception: { startYawDeg: 90, mirrorStartYawDeg: 90, endYawDeg: 5, mirrorEndYawDeg: 5 },
       highkickleftfoot: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
+      leftfootkick: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       jogbackward: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       jogforward: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       jogforward001: { startYawDeg: 0, mirrorStartYawDeg: 0, endYawDeg: 5, mirrorEndYawDeg: 5 },
@@ -831,9 +978,11 @@ export async function main(): Promise<void> {
       jogstraferight: { startYawDeg: 0, mirrorStartYawDeg: 0, endYawDeg: 5, mirrorEndYawDeg: 5 },
       jumpheadkick: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
       quickjogforward: { startYawDeg: 180, mirrorStartYawDeg: 180, endYawDeg: 5, mirrorEndYawDeg: 5 },
+      leftkneereception: { startYawDeg: 90, mirrorStartYawDeg: 90, endYawDeg: 5, mirrorEndYawDeg: 5 },
       rightkneereception: { startYawDeg: 90, mirrorStartYawDeg: 90, endYawDeg: 5, mirrorEndYawDeg: 5 },
       righttoefootreception: { startYawDeg: 5, mirrorStartYawDeg: 5, endYawDeg: 5, mirrorEndYawDeg: 5 },
       serveleftfoot: { startYawDeg: 60, mirrorStartYawDeg: 60, endYawDeg: 5, mirrorEndYawDeg: 5 },
+      serverightfoot: { startYawDeg: 60, mirrorStartYawDeg: 60, endYawDeg: 5, mirrorEndYawDeg: 5 },
       solerightfootkick: { startYawDeg: 0, mirrorStartYawDeg: 0, endYawDeg: 5, mirrorEndYawDeg: 5 },
     };
 
@@ -899,10 +1048,9 @@ export async function main(): Promise<void> {
       const facing = servingPlayer.rotation.y;
       const forward = new Vector3(Math.sin(facing), 0, Math.cos(facing));
       const right = new Vector3(forward.z, 0, -forward.x);
-      const serveConfig = getAnimConfigForClip('serve');
+      const { animKey: serveAnimKey } = serveTypeToProps(serveState.serveType);
+      const serveConfig = getAnimConfigForClip(serveAnimKey);
       const serveLoft = serveConfig ? Math.max(0, Math.min(1, serveConfig.ballLoft)) : 0.4;
-      const serveReachUnits = resolveAnimReachUnits(serveConfig, 1.2);
-      const serveReach = Math.max(0.60 * SCALE, Math.min(2.0 * SCALE, serveReachUnits * SCALE));
       const clipLengthFrames = Math.max(1, Math.round(serveConfig?.clipLengthFrames ?? 146));
       const tossFrame = Math.max(1, Math.min(clipLengthFrames, Math.round(serveConfig?.tossFrame ?? 1)));
       const contactFrame = Math.max(tossFrame + 1, Math.min(clipLengthFrames, Math.round(serveConfig?.contactFrame ?? 55)));
@@ -910,6 +1058,9 @@ export async function main(): Promise<void> {
       const rawWindowEnd = serveConfig?.contactWindow?.[1] ?? Math.min(clipLengthFrames, contactFrame + 11);
       const strikeWindowStartFrame = Math.max(0, Math.min(contactFrame, Math.min(rawWindowStart, rawWindowEnd)));
       const strikeWindowEndFrame = Math.max(strikeWindowStartFrame, Math.min(clipLengthFrames, Math.max(rawWindowStart, rawWindowEnd)));
+
+      // Detect foot-serve vs head-serve from the animConfig activeBone field.
+      const isFootServe = /foot/i.test(serveConfig?.activeBone ?? '');
 
       const handHeight = (0.94 + serveLoft * 0.07) * SCALE;
       const handBase = servingCharacter?.getHandControlPosition(serveState.hand)
@@ -926,14 +1077,31 @@ export async function main(): Promise<void> {
         .add(frontOffset)
         .add(backOfHandBias)
         .add(new Vector3(0, 0.02 * SCALE, 0));
-      const headControlPos = servingCharacter?.getHeadControlPosition() ?? servingPlayer.position.add(new Vector3(0, 1.72 * SCALE, 0));
-      const headHeightFromGround = Math.max(1.40 * SCALE, headControlPos.y - servingPlayer.position.y);
-      const headContactBase = new Vector3(
-        headControlPos.x,
-        servingPlayer.position.y + headHeightFromGround,
-        headControlPos.z,
-      );
-      const targetApexY = headContactBase.y + ((0.17 + serveLoft * 0.04) * SERVE_TOSS_HEIGHT_MULT) * SCALE;
+
+      // Contact anchor: foot position for foot-serves, head position for header serves.
+      let contactBase: Vector3;
+      let targetApexY: number;
+      if (isFootServe) {
+        const footControlPos = servingCharacter?.getFootControlPosition(serveState.foot)
+          ?? servingPlayer.position.add(new Vector3(0, 0.35 * SCALE, 0));
+        const footHeightFromGround = Math.max(0.10 * SCALE, footControlPos.y - servingPlayer.position.y);
+        contactBase = new Vector3(
+          footControlPos.x,
+          servingPlayer.position.y + footHeightFromGround,
+          footControlPos.z,
+        );
+        // Toss arc goes above the hand then falls back down to foot level.
+        targetApexY = tossAnchor.y + (0.55 + serveLoft * 0.20) * SCALE;
+      } else {
+        const headControlPos = servingCharacter?.getHeadControlPosition() ?? servingPlayer.position.add(new Vector3(0, 1.72 * SCALE, 0));
+        const headHeightFromGround = Math.max(1.40 * SCALE, headControlPos.y - servingPlayer.position.y);
+        contactBase = new Vector3(
+          headControlPos.x,
+          servingPlayer.position.y + headHeightFromGround,
+          headControlPos.z,
+        );
+        targetApexY = contactBase.y + ((0.17 + serveLoft * 0.04) * SERVE_TOSS_HEIGHT_MULT) * SCALE;
+      }
 
       // Keep authored frame order but let apex happen slightly before contact.
       const frameSpanToContact = Math.max(1, contactFrame - tossFrame);
@@ -959,9 +1127,9 @@ export async function main(): Promise<void> {
       const clampedRightOffset = Math.max(-maxRightOffset, Math.min(maxRightOffset, desiredRightOffset));
       const clampedForwardOffset = Math.max(-maxForwardOffset, Math.min(maxForwardOffset, desiredForwardOffset));
       const contactAnchor = new Vector3(
-        headContactBase.x + right.x * clampedRightOffset + forward.x * clampedForwardOffset,
-        headContactBase.y,
-        headContactBase.z + right.z * clampedRightOffset + forward.z * clampedForwardOffset,
+        contactBase.x + right.x * clampedRightOffset + forward.x * clampedForwardOffset,
+        contactBase.y,
+        contactBase.z + right.z * clampedRightOffset + forward.z * clampedForwardOffset,
       );
 
       const serveBounceHalfWidth = Math.max(0.35 * SCALE, Math.min(0.65 * TABLE_SCALE, tableProfile.halfWidth * 0.78));
@@ -994,6 +1162,17 @@ export async function main(): Promise<void> {
       }
 
       if (serveState.phase === 'toss') {
+        // --- Frame constants (stable across the whole toss phase) ---
+        const clipFrom = servingCharacter?.getActiveAnimationFrom() ?? 0;
+        const startupTrim = serveConfig?.startupTrimFrames ?? 0;
+        const safeStart = clipFrom + startupTrim;
+        // contactFrame / tossFrame in ANIM_CONFIG are post-trim; convert to
+        // absolute clip frames by adding back the trim / clip start.
+        const tossFramePost = serveConfig?.tossFrame ?? 0;
+        const tossFrameAbs = safeStart + tossFramePost;
+        const contactFrameAbs = safeStart + contactFrame;
+        const flightFrames = Math.max(1, contactFrameAbs - tossFrameAbs);
+
         if (serveState.timer <= 0) {
           ball.mesh.position.copyFrom(tossAnchor);
           ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
@@ -1002,37 +1181,152 @@ export async function main(): Promise<void> {
 
           if (!serveState.animationStarted) {
             serveState.animationStarted = true;
-            servingCharacter?.playAnimation('serve', false);
+            servingCharacter?.playAnimation(serveAnimKey, false);
           }
         }
 
-        // Keep ball in hand until the configured toss frame; frame 1 releases immediately.
-        if (!serveState.tossReleased) {
-          ball.mesh.position.copyFrom(tossAnchor);
-          ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
-          ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
+        // Sample the strike-bone position once for the toss arc endpoint.
+        // Restore to safeStart so the live animation continues from there.
+        if (serveState.tossBallTarget === null && serveState.animationStarted) {
+          const sampled = servingCharacter?.sampleServeBoneAtFrame(
+            contactFrameAbs, safeStart, isFootServe, serveState.foot,
+          ) ?? null;
 
-          if (serveState.timer >= tossReleaseTime) {
-            ball.mesh.physicsBody.setLinearVelocity(tossVelocity);
+          if (isFootServe) {
+            // Y: sampled bone height when valid, otherwise mid-thigh fallback.
+            // XZ: set later, relative to the actual toss-release position (see below).
+            //     Using an absolute player-center offset here is unreliable because
+            //     the tossing hand may already be far toward the kick side at the
+            //     release frame, making dx ≈ 0 and the arc go straight up/down.
+            const FOOT_HIT_Y = 0.58 * SCALE;
+            const validBoneY = sampled !== null && sampled.y > servingPlayer.position.y + 0.05;
+            const targetY    = validBoneY ? sampled!.y : servingPlayer.position.y + FOOT_HIT_Y;
+            serveState.tossBallTarget = new Vector3(0, targetY, 0);  // XZ placeholder
+          } else {
+            // Head serves: sampled bone position is reliable for XYZ.
+            const fallbackY = servingPlayer.position.y + 1.65 * SCALE;
+            serveState.tossBallTarget = sampled
+              ?? new Vector3(tossAnchor.x, fallbackY, tossAnchor.z);
+          }
+        }
+
+        // --- Kinematic toss: ball tracks the hand until release, then arcs ---
+        //
+        // PRE-RELEASE  (frame < tossFrameAbs):
+        //   Ball follows the live hand bone (tossAnchor) so it smoothly rides
+        //   the animation from the idle pose through the serve wind-up.
+        //
+        // RELEASE (frame == tossFrameAbs):
+        //   Snapshot the live hand position → frozenStart (the arc origin).
+        //
+        // POST-RELEASE (frame > tossFrameAbs):
+        //   Ballistic arc from frozenStart toward the strike bone, arriving at
+        //   contactFrameAbs.
+        //
+        // TIMING: driven by masterFrame so the arc is always in sync with the
+        //   animation regardless of speedRatio.
+        //
+        // XZ DIRECTION:
+        //   Foot serves  — arc toward tossBallTarget (player-right-vector offset,
+        //     set above) so the ball reliably arcs to the kick side.
+        //   Head serves  — slight forward lean only; head is roughly centered.
+        //
+        // Y HEIGHT:
+        //   Foot serves  — target the sampled bone Y; min apex 0.45 SCALE.
+        //   Head serves  — add a height lift above the tilted-head contact pose
+        //     so the ball arrives at proper striking height; min apex 0.85 SCALE.
+        {
+          const masterFrame = servingCharacter?.getActiveAnimationFrame();
+          const frameForGate = (masterFrame !== null && masterFrame !== undefined)
+            ? masterFrame
+            : safeStart + serveState.timer * ANIM_CONFIG_FPS;
+
+          if (frameForGate < tossFrameAbs) {
+            // Pre-release: ball rides the hand bone.
+            ball.mesh.position.copyFrom(tossAnchor);
+            serveState.tossReleased = false;
+          } else {
+            // Snapshot the release position exactly once, at the toss frame.
+            if (serveState.tossStartPos === null) {
+              serveState.tossStartPos = tossAnchor.clone();
+              // Foot serves: now that we know exactly where the hand releases,
+              // pin the toss-target XZ to a fixed lateral offset from that point.
+              // This guarantees a visible arc regardless of how far the hand has
+              // already drifted during the wind-up (which would make dx ≈ 0 if
+              // we used a player-center-based absolute target).
+              if (isFootServe && serveState.tossBallTarget) {
+                const footSideSign    = serveState.foot === 'right' ? -1 : 1; // model L/R is inverted vs world right vector
+                const FOOT_LATERAL    = 0.70 * SCALE; // lateral travel from release to kick
+                serveState.tossBallTarget.x = serveState.tossStartPos.x + right.x * footSideSign * FOOT_LATERAL;
+                serveState.tossBallTarget.z = serveState.tossStartPos.z + right.z * footSideSign * FOOT_LATERAL;
+              }
+            }
+            const frozenStart = serveState.tossStartPos;
+
+            // Normalised progress [0, 1] from release to contact.
+            const alpha = Math.max(0, Math.min(1, (frameForGate - tossFrameAbs) / flightFrames));
+            const visualFlightTime = Math.min(flightFrames / ANIM_CONFIG_FPS, 0.75);
+            const t = alpha * visualFlightTime;
+
+            // --- XZ + Y arc targets ---
+            let dx: number;
+            let dz: number;
+            let boneY: number;
+
+            if (isFootServe && serveState.tossBallTarget) {
+              // Aim at the exact world-XZ of the kicking-foot bone at contact.
+              // This is rotation-agnostic and needs no manual lateral tuning.
+              dx = serveState.tossBallTarget.x - frozenStart.x;
+              dz = serveState.tossBallTarget.z - frozenStart.z;
+              boneY = serveState.tossBallTarget.y;
+            } else {
+              // Head serve: slight forward lean, no lateral drift.
+              const forwardAmt = 0.12 * SCALE;
+              dx = forward.x * forwardAmt;
+              dz = forward.z * forwardAmt;
+              // The head tilts down at contactFrame so its sampled Y is too low.
+              // Add a lift so the ball arrives at proper head-strike height.
+              const rawBoneY = serveState.tossBallTarget?.y
+                ?? (servingPlayer.position.y + 1.65 * SCALE);
+              boneY = rawBoneY + 0.30 * SCALE;
+            }
+
+            const dy = boneY - frozenStart.y;
+            const rawVy0 = (dy + 0.5 * gravityAbs * visualFlightTime * visualFlightTime)
+              / visualFlightTime;
+
+            // Foot serves: use rawVy0 directly so the ball genuinely descends to
+            // ankle level (a large minVy0 floor would make it land near hand height).
+            // Small floor (0.2 SCALE) just prevents an unnatural downward launch.
+            //
+            // Head serves: enforce a tall arc (min apex 0.85 SCALE) so the ball
+            // goes clearly above the player and comes back down to head height.
+            const vy0 = isFootServe
+              ? Math.max(rawVy0 * 3.5, 0.2 * SCALE)  // ×√2 → 2× apex height
+              : Math.max(rawVy0, Math.sqrt(2.0 * gravityAbs * 0.85 * SCALE));
+            const vx = dx / visualFlightTime;
+            const vz = dz / visualFlightTime;
+
+            ball.mesh.position.set(
+              frozenStart.x + vx * t,
+              frozenStart.y + vy0 * t - 0.5 * gravityAbs * t * t,
+              frozenStart.z + vz * t,
+            );
             serveState.tossReleased = true;
+          }
+
+          ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
+          ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
+
+          if (frameForGate >= contactFrameAbs) {
+            serveState.phase = 'strike';
+            serveState.timer = 0;
+            serveState.strikeApplied = false;
+            return;
           }
         }
 
         serveState.timer += deltaTime;
-
-        if (serveState.tossReleased && serveState.timer >= contactTime) {
-          serveState.phase = 'strike';
-          serveState.timer = 0;
-          serveState.strikeApplied = false;
-        } else if (serveState.timer >= strikeWindowEndTime + 0.35) {
-          if (PURE_BALL_PHYSICS) {
-            serveState.active = false;
-            serveState.phase = 'ready';
-            serveState.timer = 0;
-          } else {
-            restartServeNoPoint();
-          }
-        }
         return;
       }
 
@@ -1043,6 +1337,7 @@ export async function main(): Promise<void> {
             serveState.active = false;
             serveState.phase = 'ready';
             serveState.timer = 0;
+            postServeGraceTimer = POST_SERVE_GRACE_SECONDS;
           } else {
             restartServeNoPoint();
           }
@@ -1050,25 +1345,25 @@ export async function main(): Promise<void> {
         return;
       }
 
-      // Strike phase
+      // Strike phase — ball was kinematically placed at the foot, so apply launch immediately.
       serveState.timer += deltaTime;
-      const strikeHeadControl = servingCharacter?.getHeadControlPosition() ?? contactAnchor;
-      const strikeHeadAnchor = new Vector3(
-        strikeHeadControl.x + forward.x * (0.04 * SCALE * strikeDirection),
-        strikeHeadControl.y + 0.02 * SCALE,
-        strikeHeadControl.z + forward.z * (0.04 * SCALE * strikeDirection),
+      const strikeControl = isFootServe
+        ? (servingCharacter?.getFootControlPosition(serveState.foot) ?? contactAnchor)
+        : (servingCharacter?.getHeadControlPosition() ?? contactAnchor);
+      const strikeAnchor = new Vector3(
+        strikeControl.x + forward.x * (0.04 * SCALE * strikeDirection),
+        strikeControl.y + (isFootServe ? 0.0 : 0.02) * SCALE,
+        strikeControl.z + forward.z * (0.04 * SCALE * strikeDirection),
       );
-      const toHead = ball.mesh.position.subtract(strikeHeadAnchor);
-      const headDist = Math.sqrt(toHead.x * toHead.x + toHead.y * toHead.y + toHead.z * toHead.z);
-      const headStrikeRadius = Math.max(0.40 * SCALE, Math.min(0.86 * SCALE, serveReach * 0.56));
-      const inHeadStrikeZone = headDist <= headStrikeRadius && ball.mesh.position.y >= strikeHeadAnchor.y - 0.40 * SCALE;
-      const strikeVelocity = ball.mesh.physicsBody.getLinearVelocity();
-      const fallingToHead = strikeVelocity.y <= -0.03 * SCALE;
       const strikeWindowDuration = Math.max(0.06, strikeWindowEndTime - strikeWindowStartTime);
 
-      if (!serveState.strikeApplied && inHeadStrikeZone && fallingToHead) {
+      // Since the toss is kinematic the ball is guaranteed to be at the foot on entry.
+      // Skip distance/descending checks — apply on the very first tick of the strike phase.
+      const applyThisFrame = serveState.timer <= deltaTime * 2;
+
+      if (!serveState.strikeApplied && applyThisFrame) {
         const contactLift = new Vector3(0, 0.03 * SCALE, 0);
-        ball.mesh.position.copyFrom(strikeHeadAnchor.add(contactLift));
+        ball.mesh.position.copyFrom(strikeAnchor.add(contactLift));
 
         const from = ball.mesh.position.clone();
         const to = serveBounceTarget.subtract(from);
@@ -1101,6 +1396,7 @@ export async function main(): Promise<void> {
           serveState.active = false;
           serveState.phase = 'ready';
           serveState.timer = 0;
+          postServeGraceTimer = POST_SERVE_GRACE_SECONDS;
         } else {
           restartServeNoPoint();
         }
@@ -1130,9 +1426,8 @@ export async function main(): Promise<void> {
 
       // Advance current player's rally phase based on their touch count
       const touchCount = touchesByPlayer[playerIndex];
-      if (touchCount <= 1) rallyPhaseByPlayer[playerIndex] = 'preparation';
-      else if (touchCount === 2) rallyPhaseByPlayer[playerIndex] = 'kick';
-      else rallyPhaseByPlayer[playerIndex] = 'kick';
+      // No preparation phase: first touch (reception) immediately arms kick.
+      rallyPhaseByPlayer[playerIndex] = 'kick';
 
       lastTouchPlayer = playerIndex;
       clearReceptionForecasts();
@@ -1223,6 +1518,7 @@ export async function main(): Promise<void> {
         serveState.active = false;
         serveState.phase = 'ready';
         serveState.timer = 0;
+        postServeGraceTimer = POST_SERVE_GRACE_SECONDS;
       }
 
       // More than one bounce on the same table side: opponent of that side gets the point.
@@ -1338,35 +1634,19 @@ export async function main(): Promise<void> {
       root.computeWorldMatrix(true);
     };
 
-    const applyPlayerDebugMaterial = (root: AbstractMesh, materialName: string, color: Color3): void => {
-      const mat = new StandardMaterial(materialName, gameScene);
-      mat.diffuseColor = color;
-      mat.specularColor = new Color3(0, 0, 0);
-      mat.emissiveColor = color.scale(0.06);
-      mat.ambientColor = color.scale(0.1);
-
-      const targets: AbstractMesh[] = [root, ...root.getChildMeshes(false)];
-      for (const mesh of targets) {
-        // Keep this purely visual and reflection-free for animation orientation checks.
-        mesh.material = mat;
-      }
-    };
-
-    // Create player 1  — animated alien character, neg-Z side of the table
-    const p1Stats: CharacterStats = { speed: 8, jump: 1.2, power: 100, spin: 80 };
-    const charData1 = await assetManager.loadModel('neymar');
-    if (charData1.meshes.length === 0) throw new Error('neymar model has no meshes');
+    // Create player 1 — Howard on the neg-Z side of the table
+    const p1Stats: CharacterStats = howardAnimData.stats;
+    const charData1 = await assetManager.loadModel('howard');
+    if (charData1.meshes.length === 0) throw new Error('howard model has no meshes');
 
     // Normalize orientation and scale to ~1.8 m tall.
     const charRoot1 = charData1.meshes[0];
     const charNorm = normalizeCharacterRoot(charRoot1, charData1.skeletons[0] ?? null);
-    const charScale1 = charNorm.scale;
 
-    player1 = new Character(0, charRoot1, charData1.skeletons[0] ?? null, p1Stats, charData1.animationGroups, PLAYER_MODEL_YAW_OFFSET, neymarAnimData);
+    player1 = new Character(0, charRoot1, charData1.skeletons[0] ?? null, p1Stats, charData1.animationGroups, PLAYER_MODEL_YAW_OFFSET, howardAnimData);
     charRoot1.position = new Vector3(0, charNorm.yOffset, -PLAYER_SPAWN_Z);
     charRoot1.rotation = new Vector3(charNorm.tiltX, PLAYER_MODEL_YAW_OFFSET, charNorm.tiltZ);  // faces +Z (toward table)
     placeCharacterSafely(charRoot1, charData1.skeletons[0] ?? null, 0, charNorm.yOffset);
-    applyPlayerDebugMaterial(charRoot1, 'p1DebugMat', new Color3(0.72, 0.74, 0.78));
 
     // Capsule collider on a SEPARATE invisible mesh — never attached to the
     // animated hierarchy so that animation root-motion cannot teleport the body
@@ -1387,19 +1667,19 @@ export async function main(): Promise<void> {
       p1Capsule.physicsBody.shape.filterCollideMask    = COL_WORLD;
     }
 
-    // Create player 2  — second independent instantiation of the same container
-    const p2Stats: CharacterStats = { speed: 8, jump: 1.2, power: 100, spin: 80 };
-    const charData2 = await assetManager.loadModel('neymar');
-    if (charData2.meshes.length === 0) throw new Error('neymar model (p2) has no meshes');
+    // Create player 2 — Howard on the positive-Z side of the table
+    const p2Stats: CharacterStats = howardAnimData.stats;
+    const charData2 = await assetManager.loadModel('howard');
+    if (charData2.meshes.length === 0) throw new Error('howard model (p2) has no meshes');
 
     const charRoot2 = charData2.meshes[0];
-    charRoot2.scaling = new Vector3(charScale1, charScale1, charScale1);
+    const charNorm2 = normalizeCharacterRoot(charRoot2, charData2.skeletons[0] ?? null);
+    charRoot2.scaling = new Vector3(charNorm2.scale, charNorm2.scale, charNorm2.scale);
 
-    player2 = new Character(1, charRoot2, charData2.skeletons[0] ?? null, p2Stats, charData2.animationGroups, PLAYER_MODEL_YAW_OFFSET, neymarAnimData);
-    charRoot2.position = new Vector3(0, charNorm.yOffset, PLAYER_SPAWN_Z);
-    charRoot2.rotation = new Vector3(charNorm.tiltX, Math.PI + PLAYER_MODEL_YAW_OFFSET, charNorm.tiltZ); // faces -Z (toward table)
-    placeCharacterSafely(charRoot2, charData2.skeletons[0] ?? null, 1, charNorm.yOffset);
-    applyPlayerDebugMaterial(charRoot2, 'p2DebugMat', new Color3(0.72, 0.74, 0.78));
+    player2 = new Character(1, charRoot2, charData2.skeletons[0] ?? null, p2Stats, charData2.animationGroups, PLAYER_MODEL_YAW_OFFSET, howardAnimData);
+    charRoot2.position = new Vector3(0, charNorm2.yOffset, PLAYER_SPAWN_Z);
+    charRoot2.rotation = new Vector3(charNorm2.tiltX, Math.PI + PLAYER_MODEL_YAW_OFFSET, charNorm2.tiltZ); // faces -Z (toward table)
+    placeCharacterSafely(charRoot2, charData2.skeletons[0] ?? null, 1, charNorm2.yOffset);
 
     // Sample socket-to-ground distances at contact frames for all gameplay
     // touches so ball placement can use animation-accurate heights.
@@ -1580,7 +1860,24 @@ export async function main(): Promise<void> {
         key === '`';
       const isCollisionDrillToggle = code === 'f9';
 
-      if (!animationPreviewMode && !collisionDrill.enabled && code === 'keyr' && !event.repeat) {
+      // Q — cycle serve type for the serving player during the ready phase.
+      if (!animationPreviewMode && !collisionDrill.enabled && key === 'q' && !event.repeat) {
+        if (serveState.active && serveState.phase === 'ready') {
+          const idx = SERVE_TYPE_ORDER.indexOf(serveState.serveType);
+          const next = SERVE_TYPE_ORDER[(idx + 1) % SERVE_TYPE_ORDER.length];
+          const { foot, hand } = serveTypeToProps(next);
+          serveState.serveType = next;
+          serveState.foot = foot;
+          serveState.hand = hand;
+          if (serveState.server === 0) p1ServeType = next;
+          else                         p2ServeType = next;
+          console.log(`[Serve] ${serveState.server === 0 ? 'P1' : 'P2'} → ${SERVE_TYPE_LABEL[next]}`);
+          event.preventDefault();
+          return;
+        }
+      }
+
+      if (!animationPreviewMode && !collisionDrill.enabled && key === 'r' && !event.repeat) {
         event.preventDefault();
         quickRestartRally(0);
         console.log('[Debug] quick rally restart (P1 serve)');
@@ -1640,7 +1937,7 @@ export async function main(): Promise<void> {
           setCollisionDrillAction('scissor');
           return;
         }
-        if (code === 'keyb') {
+        if (key === 'b') {
           event.preventDefault();
           collisionDrillForceToss = true;
           return;
@@ -1695,7 +1992,7 @@ export async function main(): Promise<void> {
           }
           return;
         }
-        if (code === 'keym' || code === 'comma' || code === 'slash' || code === 'f6') {
+        if (key === 'm' || code === 'comma' || code === 'slash' || code === 'f6') {
           event.preventDefault();
           if (event.repeat) {
             return;
@@ -1705,28 +2002,28 @@ export async function main(): Promise<void> {
           playPreviewClip(false);
           return;
         }
-        if (code === 'keyo') {
+        if (key === 'o') {
           event.preventDefault();
           animationPreviewFacingFlip = !animationPreviewFacingFlip;
           console.log(`[Debug] preview facingFlip=${animationPreviewFacingFlip}`);
           playPreviewClip(false);
           return;
         }
-        if (code === 'minus' || code === 'numpadsubtract' || code === 'keyk') {
+        if (code === 'minus' || code === 'numpadsubtract' || key === 'k') {
           event.preventDefault();
           animationPreviewSpeed = Math.max(0.1, animationPreviewSpeed - 0.1);
           console.log(`[Debug] preview speed=${animationPreviewSpeed.toFixed(2)}`);
           playPreviewClip(false);
           return;
         }
-        if (code === 'equal' || code === 'numpadadd' || code === 'keyi') {
+        if (code === 'equal' || code === 'numpadadd' || key === 'i') {
           event.preventDefault();
           animationPreviewSpeed = Math.min(3.0, animationPreviewSpeed + 0.1);
           console.log(`[Debug] preview speed=${animationPreviewSpeed.toFixed(2)}`);
           playPreviewClip(false);
           return;
         }
-        if (code === 'keyp') {
+        if (key === 'p') {
           event.preventDefault();
           if (target && clips.length > 0) {
             const idx = Math.max(0, Math.min(animationPreviewClipIndex, clips.length - 1));
@@ -1735,7 +2032,7 @@ export async function main(): Promise<void> {
           }
           return;
         }
-        if (code === 'keyl') {
+        if (key === 'l') {
           event.preventDefault();
           if (target && clips.length > 0) {
             const idx = Math.max(0, Math.min(animationPreviewClipIndex, clips.length - 1));
@@ -1800,9 +2097,9 @@ export async function main(): Promise<void> {
     const actionExtraLift = 1.4 * SCALE;
     const actionAssistDuration = 0.34; // seconds
     const actionAssistImpactTime = 0.20; // remaining-time threshold for impact frame
-    const actionAssistRepositionSpeed = 10.2 * SCALE;
-    const actionAssistContactDistance = 0.92 * SCALE;
-    const actionAssistMagnetRange = 1.55 * SCALE;
+    const actionAssistRepositionSpeed = 6.8 * SCALE;
+    const actionAssistContactDistance = 0.55 * SCALE;
+    const actionAssistMagnetRange = 0.65 * SCALE;
     const actionAssistMagnetStrength = 20.0 * SCALE;
     const actionRequestTtl = 1.60; // seconds
     const actionFallingMinYSpeed = -0.2 * SCALE;
@@ -1818,10 +2115,10 @@ export async function main(): Promise<void> {
     const actionScissorDuration = 0.48;
     const actionKneeImpactTime = 0.20;
     const actionScissorImpactTime = 0.18;
-    const actionKneeContactDistance = 0.82 * SCALE;
-    const actionScissorContactDistance = 0.94 * SCALE;
-    const actionKneeMagnetRange = 1.20 * SCALE;
-    const actionScissorMagnetRange = 1.35 * SCALE;
+    const actionKneeContactDistance = 0.52 * SCALE;
+    const actionScissorContactDistance = 0.56 * SCALE;
+    const actionKneeMagnetRange = 0.62 * SCALE;
+    const actionScissorMagnetRange = 0.66 * SCALE;
     const actionKneeDepth = 0.66 * SCALE;
     const actionScissorDepth = 0.86 * SCALE;
     const actionKneeLateral = 0.20 * SCALE;
@@ -1834,8 +2131,8 @@ export async function main(): Promise<void> {
     const actionTimingContactTailSeconds = 0.10;
     const actionTimingMaxDuration = 1.45;
     const actionMirrorLeadTime = 0.12;
-    const actionEarlyContactCaptureExtra = 0.82 * SCALE;
-    const actionEarlyContactRootRadius = 2.10 * SCALE;
+    const actionEarlyContactCaptureExtra = 0.30 * SCALE;
+    const actionEarlyContactRootRadius = 1.65 * SCALE;
     const actionPrecontactHeightTolerance = 0.18 * SCALE;
     const actionPrecontactRangePaddingFactor = 0.78;
     const vicinityInterceptionRange = 2.45 * SCALE;
@@ -1877,7 +2174,7 @@ export async function main(): Promise<void> {
     const ENABLE_PLAYER_BODY_COLLISION_RESOLUTION = true;
     const ENABLE_BALL_OSCILLATION_GUARD = ENABLE_BALL_ASSIST && !PURE_BALL_PHYSICS;
     const ENABLE_DRIBBLE_PUSH = false;
-    const ENABLE_ARCADE_RALLY_SCRIPT = true;
+    const ENABLE_ARCADE_RALLY_SCRIPT = false; // disabled: ball uses natural Havok physics after kicks/bounces
 
     const p1Motion = { vx: 0, vz: 0, facing: 0 };
     const p2Motion = { vx: 0, vz: 0, facing: Math.PI };
@@ -2359,11 +2656,6 @@ export async function main(): Promise<void> {
         return 'receptionChest';
       }
 
-      if (phase === 'preparation') {
-        if (ballBand === 'high' || ballBand === 'veryHigh') return 'prepChest';
-        return 'prepInnerRight';
-      }
-
       // Kick phase subdivision from the provided clip grouping:
       // mid  -> CloseTableRightFootKick / CloseTableLowHeadKick
       // high -> HeadKick (center) or SoleRightFootKick (lateral)
@@ -2591,34 +2883,7 @@ export async function main(): Promise<void> {
       if (receptionSnapshot && (phase === 'defense' || phase === 'reception')) {
         effectivePhase = 'reception';
       }
-      // If we're planning a preparation and it looks reachable, choose a
-      // desirable placement to prepare the following kick.
-      if (effectivePhase === 'preparation') {
-        // compute a suggested control target that helps set up a kick
-        try {
-          const forwardSign = player === 0 ? 1 : -1;
-          const tableTarget = chooseBestTableCell(player, playerPos, opponentPos, 'preparation', ballBand);
-          const controlX = clampi(tableTarget.x * 0.65 + playerPos.x * 0.35, -playerHalfCourtX * 0.95, playerHalfCourtX * 0.95);
-          const controlZ = Math.max(player === 0 ? -playerHalfCourtZ : minCourtSplitZ, Math.min(player === 0 ? -minCourtSplitZ : playerHalfCourtZ, playerPos.z + forwardSign * 0.58 * SCALE));
-          const controlY = 1.35 * SCALE;
-          prepControlTargetByPlayer[player] = new Vector3(controlX, controlY, controlZ);
-        } catch (e) {
-          // defensive: clear target if anything goes wrong
-          prepControlTargetByPlayer[player] = null;
-        }
-      }
-      if (phase === 'preparation') {
-        const laneGood = Math.abs(opponentPos.x - ball.mesh.position.x) > 1.8 * SCALE;
-        const highControl = ballBand === 'high' || ballBand === 'veryHigh';
-        const closeEnough = horizontalDist < 1.95 * SCALE;
-        const shouldPromoteToKick =
-          touchesByPlayer[player] >= 3 ||
-          (touchesByPlayer[player] >= 2 && ballBand === 'veryHigh' && horizontalDist < 1.55 * SCALE);
-
-        if (shouldPromoteToKick && laneGood && highControl && closeEnough) {
-          effectivePhase = 'kick';
-        }
-      }
+      // No preparation phase: reception goes directly to kick.
 
       const action = receptionSnapshot && effectivePhase === 'reception'
         ? receptionSnapshot.action
@@ -2756,7 +3021,6 @@ export async function main(): Promise<void> {
         if (phase) return phase;
         const nextTouch = touchesByPlayer[player] + 1;
         if (nextTouch <= 1) return 'reception';
-        if (nextTouch === 2) return 'preparation';
         return 'kick';
       }
       if (ballSide === player) {
@@ -2799,7 +3063,9 @@ export async function main(): Promise<void> {
 
       const plan = planInferredAction(player, playerPos, opponentPos);
       if (plan.effectivePhase === 'defense' || !plan.reachable) return;
-      if (plan.effectivePhase === 'kick' && touchesByPlayer[player] < 2) return;
+      // Allow kick after at least 1 reception touch (no preparation phase)
+      if (plan.effectivePhase === 'kick' && touchesByPlayer[player] < 1) return;
+      if (plan.effectivePhase === 'reception') return; // handled by tryGuaranteedReception
 
       const aiDecision = chooseAiActionDecision(plan.effectivePhase, plan.ballBand, plan.action, playerPos, opponentPos);
 
@@ -3025,6 +3291,9 @@ export async function main(): Promise<void> {
       );
     };
 
+    // One-time setup for DOM overlays that live alongside the game canvas.
+    initServeSelectorUI();
+
     gameScene.registerBeforeRender(() => {
       if (!ball || !ball.mesh.physicsBody) {
         return;
@@ -3205,6 +3474,18 @@ export async function main(): Promise<void> {
         // receiver's table side so airborne reception can start immediately.
         const bouncedOnTableNow = isTableSurfaceBounce(ball.mesh.position);
         const bounceSide = sideFromZ(ball.mesh.position.z);
+
+        // Track table bounces for rally-phase detection.
+        // In PURE_BALL_PHYSICS mode, handleBounceRules() is never called, so the
+        // tableBouncesOnSideSinceLastTouch counter would stay at 0 — causing
+        // getPlannedPhase() to always return 'defense' instead of 'reception'.
+        // Only increment here in pure-physics mode; the non-pure path increments
+        // inside handleBounceRules() below (to avoid double-counting).
+        // The counter is reset by registerPlayerTouch() and clearRallyState().
+        if (bouncedOnTableNow && PURE_BALL_PHYSICS) {
+          tableBouncesOnSideSinceLastTouch[bounceSide] += 1;
+        }
+
         if (
           serveState.active &&
           serveState.phase === 'flight' &&
@@ -3218,6 +3499,24 @@ export async function main(): Promise<void> {
 
         if (!collisionDrill.enabled && !PURE_BALL_PHYSICS) {
           handleBounceRules();
+        }
+
+        // In PURE_BALL_PHYSICS mode, enforce the double-bounce fault rule directly:
+        // if the ball bounces a second time on the same table side since the last
+        // touch and a player already touched last (rally is live), award the point
+        // to the opponent of whoever is on that side.
+        if (
+          PURE_BALL_PHYSICS &&
+          !collisionDrill.enabled &&
+          matchManager.isMatchActive &&
+          !serveState.active &&
+          bouncedOnTableNow &&
+          tableBouncesOnSideSinceLastTouch[bounceSide] > 1 &&
+          lastTouchPlayer !== null
+        ) {
+          // Opponent of the bouncing side scores
+          const sideOpponent: CourtSide = bounceSide === 0 ? 1 : 0;
+          awardPoint(sideOpponent);
         }
       }
 
@@ -3246,9 +3545,6 @@ export async function main(): Promise<void> {
         if (myPhase === 'kick') {
           return { targetAbsZ: AI_FINAL_KICK_TARGET_Z, followWeight: 0.72 };
         }
-        if (myPhase === 'preparation') {
-          return { targetAbsZ: AI_PREP_STEP_IN_TARGET_Z, followWeight: 0.62 };
-        }
 
         const horizontalSpeed = Math.sqrt(vel.x * vel.x + vel.z * vel.z);
         const movingTowardMe = side === 0 ? vel.z < -0.04 * SCALE : vel.z > 0.04 * SCALE;
@@ -3258,7 +3554,7 @@ export async function main(): Promise<void> {
           ball.mesh.position.y < 2.2 * SCALE;
         const opponentLikelySoftKick =
           ballSide === opponent &&
-          (opponentPhase === 'reception' || opponentPhase === 'preparation') &&
+          opponentPhase === 'reception' &&
           horizontalSpeed < AI_LOW_SPEED_RETURN_THRESHOLD * 1.15;
 
         if (likelyShortIncoming || opponentLikelySoftKick) {
@@ -3352,7 +3648,9 @@ export async function main(): Promise<void> {
         const incoming = player === 0 ? vel.z < -0.08 * SCALE : vel.z > 0.08 * SCALE;
         const depthRatio = incoming ? 0.33 : 0.18;
         const targetZ = minZ + span * depthRatio;
-        const targetX = Math.max(-playerHalfCourtX * 0.72, Math.min(playerHalfCourtX * 0.72, ball.mesh.position.x * 0.62));
+        // When ball is on opponent's side, position diagonally opposite the
+        // ball's lateral (X) position so the player is harder to bypass.
+        const targetX = Math.max(-playerHalfCourtX * 0.72, Math.min(playerHalfCourtX * 0.72, -ball.mesh.position.x * 0.62));
 
         const dx = targetX - playerPos.x;
         const dz = targetZ - playerPos.z;
@@ -3369,19 +3667,11 @@ export async function main(): Promise<void> {
       };
 
       if (!collisionDrill.enabled) {
-        if (!ENABLE_P1_AI) {
-          const p1DefenseAdjust = getDefenseAdjustment(0, charRoot1.position, -playerHalfCourtZ, -minCourtSplitZ);
-          if (Math.abs(p1MoveX) < 0.01) {
-            p1MoveX = p1DefenseAdjust.x;
-          }
-          if (Math.abs(p1MoveZ) < 0.01) {
-            p1MoveZ = p1DefenseAdjust.z;
-          } else {
-            p1MoveZ += p1DefenseAdjust.z * 0.25;
-          }
-        }
+        // P1 is human-controlled — no automatic defense repositioning so the
+        // player only moves when arrow keys are pressed.
 
         if (!ENABLE_P2_AI) {
+          // P2 human-controlled: same respect for pure input, no auto-drift.
           const p2DefenseAdjust = getDefenseAdjustment(1, charRoot2.position, minCourtSplitZ, playerHalfCourtZ);
           if (Math.abs(p2MoveX) < 0.01) {
             p2MoveX = p2DefenseAdjust.x;
@@ -3416,8 +3706,17 @@ export async function main(): Promise<void> {
         }
       }
 
+      // Lock P1 arrow-key movement while a reception or kick animation is playing.
+      // The assist system already overrides movement during p1Assist.active (kick phase);
+      // this covers the reception animation window (strikeState.timer set by tryGuaranteedReception).
+      if (!collisionDrill.enabled && p1StrikeState.timer > 0) {
+        p1MoveX = 0;
+        p1MoveZ = 0;
+      }
+
       const now = Date.now();
-      let serveSetupActive = serveState.active;
+      postServeGraceTimer = Math.max(0, postServeGraceTimer - deltaTime);
+      let serveSetupActive = serveState.active || postServeGraceTimer > 0;
 
       if (collisionDrill.enabled) {
         serveState.active = false;
@@ -3528,7 +3827,17 @@ export async function main(): Promise<void> {
           serveState.strikeApplied = false;
           serveState.animationStarted = true;
           const servingCharacter = serveState.server === 0 ? player1 : player2;
-          servingCharacter?.playAnimation('serve', false);
+          const { animKey: serveAnimKey } = serveTypeToProps(serveState.serveType);
+          servingCharacter?.playAnimation(serveAnimKey, false);
+          // Lock setMovement for the full clip duration so the kick follow-through
+          // can play even if the physics strike window expires before that frame.
+          {
+            const serveCfg = getAnimConfigForClip(serveAnimKey);
+            const clipFrames = Math.max(30, serveCfg?.clipLengthFrames ?? 57);
+            const animDuration = clipFrames / ANIM_CONFIG_FPS;
+            if (serveState.server === 0) p1ServeAnimLockTimer = animDuration;
+            else                         p2ServeAnimLockTimer = animDuration;
+          }
         }
       }
 
@@ -3565,15 +3874,8 @@ export async function main(): Promise<void> {
         if (plan.phase === 'defense' || !plan.reachable) {
           return;
         }
-        if (plan.effectivePhase === 'kick' && touchesByPlayer[player] < 2) {
-          return;
-        }
-
-        if (pendingPrepSuperHigh[player] && plan.effectivePhase === 'preparation') {
-          request.action = 'prepChest';
-          request.ttl = Math.max(request.ttl, actionRequestTtl * 0.9);
-          pendingPrepSuperHigh[player] = false;
-          requestPowerByPlayer[player] = 0.88;
+        // Allow kick after at least 1 reception touch (no preparation phase)
+        if (plan.effectivePhase === 'kick' && touchesByPlayer[player] < 1) {
           return;
         }
 
@@ -3584,7 +3886,13 @@ export async function main(): Promise<void> {
         request.ttl = aiControlled ? aiDecision.ttl : actionRequestTtl;
         requestPowerByPlayer[player] = aiControlled
           ? aiDecision.powerMult
-          : (player === 0 ? p1KickPowerMult.value : 1);
+          : (player === 0 ? requestPowerByPlayer[0] : 1);
+
+        // Double-tap override: force foot kick on closest-foot side
+        if (player === 0 && p1ForcedKickAction !== null) {
+          request.action = p1ForcedKickAction;
+          p1ForcedKickAction = null;
+        }
       };
 
       const triggerAction = (
@@ -3643,12 +3951,34 @@ export async function main(): Promise<void> {
           ? predictedBallForMirror
           : predictedContactBall;
 
-        if (!character.performAirAction(action, mirrorHint)) return;
+        // Compute ball arrival time and derive animation speed ratio for sync
+        let syncedSpeedRatio: number | undefined;
+        if (animConfig && animConfig.contactFrame > 0) {
+          const ballNow = ball.mesh.position.clone();
+          const ballVelNow = physicsBody.getLinearVelocity().clone();
+          const contactH = root.position.y + (profile.fallbackY ?? 1.0);
+          const arrivalPrediction = BallPredictor.ballAtArrival(ballNow, ballVelNow, contactH, gravityAbs);
+          const arrivalTime = arrivalPrediction.timeSeconds;
+          if (arrivalTime > 0.05) {
+            const naturalDuration = animConfig.contactFrame / ANIM_CONFIG_FPS;
+            const rawRatio = naturalDuration / arrivalTime;
+            syncedSpeedRatio = Math.max(0.75, Math.min(4.0, rawRatio));
+          }
+        }
+
+        if (!character.performAirAction(action, mirrorHint, false, syncedSpeedRatio)) return;
 
         assist.active = true;
         assist.action = action;
         assist.timer = strikeTiming.strikeDuration;
         assist.impactTime = strikeTiming.impactTime;
+
+        // Sync the impact time to match the ball arrival so ball-snap fires correctly
+        if (syncedSpeedRatio !== undefined && animConfig && animConfig.contactFrame > 0) {
+          const syncedContactSeconds = (animConfig.contactFrame / ANIM_CONFIG_FPS) / syncedSpeedRatio;
+          assist.impactTime = syncedContactSeconds;
+          assist.timer = Math.max(assist.timer, syncedContactSeconds + 0.35);
+        }
         assist.hitApplied = false;
         assist.targetX = Math.max(-playerHalfCourtX, Math.min(playerHalfCourtX, target.x));
         assist.targetZ = Math.max(minZ, Math.min(maxZ, target.z));
@@ -3656,9 +3986,8 @@ export async function main(): Promise<void> {
         motion.vx = 0;
         motion.vz = 0;
 
-        const targetFacing = isLimbReceptionAction(action)
-          ? getLateralReceptionFacing(root.position, predictedContactBall)
-          : getCourtCenterFacing(root.position);
+        // Always face the table center — lateral facing caused 90° spin-aways.
+        const targetFacing = getCourtCenterFacing(root.position);
 
         // Keep the player oriented for the action: center-facing for strikes,
         // lateral-facing for inner-foot reception/prep.
@@ -3666,6 +3995,24 @@ export async function main(): Promise<void> {
         root.rotation.y = motion.facing + PLAYER_MODEL_YAW_OFFSET + (character?.getMirrorFacingCompensationYaw() ?? 0) + (character?.getAnimationFacingCompensationYaw() ?? 0);
         strikeState.action = action;
         strikeState.timer = strikeTiming.strikeDuration;
+        // Align strikeState.timer with the synced contact frame so the impact window
+        // opens exactly when the ball reaches the strike bone.
+        //
+        // The impact window opens when:
+        //   strikeState.timer <= assist.impactTime + impactWindowGrace
+        //   = syncedContactSeconds + impactWindowGrace
+        //
+        // For the window to open at elapsed = syncedContactSeconds (= arrivalTime):
+        //   strikeState.timer_start - syncedContactSeconds = syncedContactSeconds + impactWindowGrace
+        //   ↔ strikeState.timer_start = 2 * syncedContactSeconds + impactWindowGrace
+        //
+        // Without this, a fast-playing animation (high rawRatio, e.g. after a
+        // reception pop-up) would have its window open AFTER ball arrival, causing
+        // the kick impulse to fire once the ball has already fallen past the bone.
+        if (syncedSpeedRatio !== undefined && animConfig && animConfig.contactFrame > 0) {
+          const sc = (animConfig.contactFrame / ANIM_CONFIG_FPS) / syncedSpeedRatio;
+          strikeState.timer = 2.0 * sc + impactWindowGrace;
+        }
       };
 
       const chooseVicinityReceptionAction = (
@@ -3723,6 +4070,124 @@ export async function main(): Promise<void> {
         return bestAction;
       };
 
+      const tryGuaranteedReception = (
+        playerSide: CourtSide,
+        request: ActionRequestState,
+        character: Character | undefined,
+        root: { position: Vector3; rotation: Vector3 },
+        motion: { vx: number; vz: number; facing: number },
+        minZ: number,
+        maxZ: number,
+        assist: AssistState,
+        strikeState: { action: OffensiveAction | null; timer: number },
+      ): void => {
+        if (!character || collisionDrill.enabled) return;
+        // Only block reception if THIS player is actively serving (toss/strike phases).
+        // postServeGraceTimer (1.4 s) must NOT block the receiver — the serve ball
+        // arrives during that window and the receiver needs to handle it immediately.
+        if (serveState.active && serveState.server === playerSide && serveState.phase !== 'flight') return;
+        if (assist.active || character.isInStrike() || (strikeState.action !== null && strikeState.timer > 0)) return;
+        if (!isBallInsidePlayableCourtXZ(0.28 * SCALE)) return;
+
+        // Ball must be on this player's side
+        const ballSide = sideFromZ(ball.mesh.position.z);
+        if (ballSide !== playerSide) return;
+
+        // Phase check: only in reception phase (kick phase means we already received)
+        const currentPhase = getPlannedPhase(playerSide, ballSide);
+        if (currentPhase === 'kick') return;
+
+        // Ball must be airborne but within receivable height range
+        const ballY = ball.mesh.position.y;
+        const minBallY = ballRadius + 0.08 * SCALE;
+        const maxBallY = 3.5 * SCALE;
+        if (ballY < minBallY || ballY > maxBallY) return;
+
+        // Choose action first so proximity gate can use its reach
+        const action = chooseVicinityReceptionAction(playerSide, root.position, motion.facing);
+        const rcvAnimConfig = getAnimConfigForAction(action);
+
+        const rcvProfile = getActionAssistProfile(action);
+
+        // ── Sync animation speed to ball arrival time ────────────────────────────
+        // We want the animation contact frame to fire just as the ball reaches the
+        // player, so adjust playback speed to match ball arrival time.
+        let syncedSpeedRatio = actionAnimationSpeedRatio;
+        const ballVelNow = physicsBody.getLinearVelocity().clone();
+        if (rcvAnimConfig && rcvAnimConfig.contactFrame > 0) {
+          const contactH = root.position.y + (rcvProfile.fallbackY ?? 0.9 * SCALE);
+          const arrivalPrediction = BallPredictor.ballAtArrival(
+            ball.mesh.position.clone(), ballVelNow, contactH, gravityAbs,
+          );
+          const arrivalTime = arrivalPrediction.timeSeconds;
+          if (arrivalTime > 0.05) {
+            const naturalDuration = rcvAnimConfig.contactFrame / ANIM_CONFIG_FPS;
+            syncedSpeedRatio = Math.max(0.65, Math.min(2.2, naturalDuration / arrivalTime));
+          }
+        }
+
+        // ── Predict ball position at the contact frame ───────────────────────────
+        // Start the animation when the ball will be within reach at contact time.
+        const contactFrameSecs = rcvAnimConfig && rcvAnimConfig.contactFrame > 0
+          ? rcvAnimConfig.contactFrame / ANIM_CONFIG_FPS / syncedSpeedRatio
+          : 0.30;
+        const predictedBall = new Vector3(
+          ball.mesh.position.x + ballVelNow.x * contactFrameSecs,
+          ball.mesh.position.y + ballVelNow.y * contactFrameSecs - 0.5 * gravityAbs * contactFrameSecs * contactFrameSecs,
+          ball.mesh.position.z + ballVelNow.z * contactFrameSecs,
+        );
+        // Generous trigger range — the ball will travel toward the player while the
+        // animation winds up, and the assist system fine-tunes player position.
+        const receptionTriggerRange = (rcvAnimConfig ? rcvAnimConfig.reach * SCALE : 1.2 * SCALE) * 1.45;
+        const predictedFlatDist = Vector3.Distance(
+          new Vector3(root.position.x, 0, root.position.z),
+          new Vector3(predictedBall.x, 0, predictedBall.z),
+        );
+        const currentFlatDist = Vector3.Distance(
+          new Vector3(root.position.x, 0, root.position.z),
+          new Vector3(ball.mesh.position.x, 0, ball.mesh.position.z),
+        );
+        // Accept when predicted arrival is in reach, or ball is already very close.
+        if (predictedFlatDist > receptionTriggerRange && currentFlatDist > receptionTriggerRange * 0.55) return;
+
+        // ── Start the reception animation ────────────────────────────────────────
+        // The ball pop-up fires at the contact frame via applyPlayerBallInfluence.
+        if (!character.performAirAction(action, ball.mesh.position, false, syncedSpeedRatio)) return;
+
+        const strikeTiming = resolveStrikeTiming(rcvProfile, rcvAnimConfig);
+        let rcvImpactTime = strikeTiming.impactTime;
+        let rcvStrikeDuration = strikeTiming.strikeDuration;
+        if (rcvAnimConfig && rcvAnimConfig.contactFrame > 0) {
+          const syncedContactSeconds = (rcvAnimConfig.contactFrame / ANIM_CONFIG_FPS) / syncedSpeedRatio;
+          rcvImpactTime = syncedContactSeconds;
+          rcvStrikeDuration = Math.max(rcvStrikeDuration, syncedContactSeconds + 0.35);
+        }
+
+        strikeState.action = action;
+        strikeState.timer = rcvStrikeDuration;
+
+        assist.active = true;
+        assist.action = action;
+        assist.timer = rcvStrikeDuration;
+        assist.impactTime = rcvImpactTime;
+        assist.hitApplied = false;
+        assist.targetX = root.position.x;
+        assist.targetZ = root.position.z;
+
+        // Face the table
+        const targetFacing = getCourtCenterFacing(root.position);
+        motion.facing = targetFacing;
+        root.rotation.y = motion.facing + PLAYER_MODEL_YAW_OFFSET
+          + (character.getMirrorFacingCompensationYaw() ?? 0)
+          + (character.getAnimationFacingCompensationYaw() ?? 0);
+        motion.vx = 0;
+        motion.vz = 0;
+
+        // Clear any pending queued action
+        request.action = null;
+        request.ttl = 0;
+      };
+
       const tryVicinityInterception = (
         playerSide: CourtSide,
         request: ActionRequestState,
@@ -3771,50 +4236,51 @@ export async function main(): Promise<void> {
           }
         }
       } else {
-        // Human P1 — hold-to-charge model (release fires the kick)
-        const p1Phase = getPlannedPhase(0, sideFromZ(ball.mesh.position.z));
-
-        // Track grace period: reset when entering kick phase
-        if (p1Phase === 'kick' && p1KickGraceStart < 0) {
-          p1KickGraceStart = now;
-        } else if (p1Phase !== 'kick') {
-          p1KickGraceStart = -1;
-        }
-
+        // Human P1 — single tap = medium power, double tap = high power
         if (!collisionDrill.enabled && !serveSetupActive) {
-          // Rising edge: start charge (valid in preparation + kick phase only)
-          if (p1KickPressed && !p1KickButtonHeld && (p1Phase === 'kick' || p1Phase === 'preparation')) {
-            p1KickChargeStart = now;
-            p1KickAim.x = inputManager.getMoveX(0);  // aim snapshot on press
-          }
+          const p1Phase = getPlannedPhase(0, sideFromZ(ball.mesh.position.z));
 
-          // Falling edge: commit kick with accumulated charge
-          if (!p1KickPressed && p1KickButtonHeld && p1KickChargeStart >= 0) {
-            const holdMs = now - p1KickChargeStart;
-            p1KickPowerMult.value = KICK_CHARGE_TABLE.find(([thresh]) => holdMs < thresh)?.[1] ?? 1.75;
-            p1KickAim.x = inputManager.getMoveX(0);  // re-snap aim on release for precision
-            p1KickAim.z = 1;  // always aim deep (up/down does nothing per C1)
-            p1KickChargeStart = -1;
-            if (now - lastP1ActionPress > actionPressCooldown) {
-              requestPowerByPlayer[0] = p1KickPowerMult.value;
-              queueInferredKickRequest(0, p1Request);
-              lastP1ActionPress = now;
-              p1KickGraceStart = -1;  // player acted — cancel grace auto-kick
-            }
-          }
-
-          // Grace-period auto-kick (C3): fire if player hasn't kicked in time
-          if (p1Phase === 'kick' && p1KickGraceStart >= 0 && now - p1KickGraceStart > P1_KICK_GRACE_MS) {
-            if (now - lastP1ActionPress > actionPressCooldown) {
-              p1KickPowerMult.value = 0.80;  // conservative control-level power
-              p1KickAim.x = 0;
-              p1KickAim.z = 1;
-              p1KickChargeStart = -1;
-              requestPowerByPlayer[0] = p1KickPowerMult.value;
-              queueInferredKickRequest(0, p1Request);
-              lastP1ActionPress = now;
-            }
+          // Track grace period for kick phase (keep for UX awareness, but no longer auto-fires)
+          if (p1Phase === 'kick' && p1KickGraceStart < 0) {
+            p1KickGraceStart = now;
+          } else if (p1Phase !== 'kick') {
             p1KickGraceStart = -1;
+          }
+
+          // Rising edge: instant tap decision
+          if (p1KickPressed && !p1KickButtonHeld) {
+            // Only kick after reception (kick phase), not before
+            if (p1Phase === 'kick' &&
+                !p1Assist.active &&
+                now - lastP1ActionPress > actionPressCooldown) {
+
+              const isDoubleTap = now - lastP1KickButtonPress <= DOUBLE_TAP_WINDOW_MS;
+              if (isDoubleTap) {
+                requestPowerByPlayer[0] = 1.45;  // double tap → high power
+                // Foot kick: choose side by whichever foot bone is closest to the ball
+                if (player1) {
+                  const leftFootPos  = player1.getFootControlPosition('left');
+                  const rightFootPos = player1.getFootControlPosition('right');
+                  const leftDist  = Vector3.Distance(leftFootPos,  ball.mesh.position);
+                  const rightDist = Vector3.Distance(rightFootPos, ball.mesh.position);
+                  p1ForcedKickAction = rightDist <= leftDist ? 'kickSoleRight' : 'kickHighLeft';
+                }
+                if (p1Phase === 'kick') pendingKickPowerBoost[0] = true;
+              } else {
+                requestPowerByPlayer[0] = 1.00;  // single tap → medium power
+              }
+              p1KickAim.x = inputManager.getMoveX(0);
+              p1KickAim.z = 1;
+              lastP1KickButtonPress = now;
+              queueInferredKickRequest(0, p1Request);
+              lastP1ActionPress = now;
+              p1KickGraceStart = -1;
+            } else if (!p1Assist.active &&
+                       p1Phase === 'kick' &&
+                       now - lastP1ActionPress <= actionPressCooldown) {
+              // Just record the tap timestamp for double-tap detection even on cooldown
+              lastP1KickButtonPress = now;
+            }
           }
         }
       }
@@ -3822,6 +4288,8 @@ export async function main(): Promise<void> {
 
       // Power meter charge indicator removed (HUD is now EventBus-driven via UIManager)
 
+      // P2 AI: auto-reception via tryGuaranteedReception; kick via queueInferredKickRequest.
+      // queueAutoAction guards touchesByPlayer >= 1 (no preparation phase).
       if (!collisionDrill.enabled && !serveSetupActive && now - lastP2ActionPress > actionPressCooldown) {
         if (ENABLE_P2_AI) {
           const toBall2 = ball.mesh.position.subtract(charRoot2.position);
@@ -3838,10 +4306,7 @@ export async function main(): Promise<void> {
       if (!collisionDrill.enabled && !ENABLE_P2_AI && !serveSetupActive && p2KickPressed && !p2KickButtonHeld && now - lastP2ActionPress > actionPressCooldown) {
         const phase = getPlannedPhase(1, sideFromZ(ball.mesh.position.z));
         const isDoubleTap = now - lastP2KickButtonPress <= DOUBLE_TAP_WINDOW_MS;
-        if (isDoubleTap) {
-          if (phase === 'preparation') pendingPrepSuperHigh[1] = true;
-          if (phase === 'kick') pendingKickPowerBoost[1] = true;
-        }
+        if (isDoubleTap && phase === 'kick') pendingKickPowerBoost[1] = true;
         lastP2KickButtonPress = now;
         queueInferredKickRequest(1, p2Request);
         lastP2ActionPress = now;
@@ -3850,18 +4315,16 @@ export async function main(): Promise<void> {
 
       // Arcade autopilot: if player didn't provide an action input, pick one from
       // touch phase + box classification to keep rallies flowing predictably.
-      // For P1 human, block auto-queue during kick phase — player must press Space.
+      // For human P1, reception is handled by tryGuaranteedReception; kick is manual.
       if (!collisionDrill.enabled) {
-        const p1BallSide = sideFromZ(ball.mesh.position.z);
-        const p1AutoPhase = getPlannedPhase(0, p1BallSide);
-        if (ENABLE_P1_AI || p1AutoPhase !== 'kick') {
+        if (ENABLE_P1_AI) {
           queueAutoAction(0, p1Request, p1Assist, player1, p1StrikeState, charRoot1.position, charRoot2.position, serveSetupActive);
         }
         queueAutoAction(1, p2Request, p2Assist, player2, p2StrikeState, charRoot2.position, charRoot1.position, serveSetupActive);
       }
 
       if (!collisionDrill.enabled && !serveSetupActive) {
-        tryVicinityInterception(
+        tryGuaranteedReception(
           0,
           p1Request,
           player1,
@@ -3872,7 +4335,7 @@ export async function main(): Promise<void> {
           p1Assist,
           p1StrikeState,
         );
-        tryVicinityInterception(
+        tryGuaranteedReception(
           1,
           p2Request,
           player2,
@@ -3939,9 +4402,8 @@ export async function main(): Promise<void> {
           motion.vx = (root.position.x - prevX) / Math.max(1e-4, deltaTime);
           motion.vz = (root.position.z - prevZ) / Math.max(1e-4, deltaTime);
 
-          const targetFacing = activeAssistAction === 'receptionInnerRight' || activeAssistAction === 'prepInnerRight'
-            ? getLateralReceptionFacing(root.position, ball.mesh.position)
-            : getCourtCenterFacing(root.position);
+          // Always face the table center during assists.
+          const targetFacing = getCourtCenterFacing(root.position);
           const delta = Math.atan2(
             Math.sin(targetFacing - motion.facing),
             Math.cos(targetFacing - motion.facing),
@@ -4092,6 +4554,11 @@ export async function main(): Promise<void> {
         strikeState: { action: OffensiveAction | null; timer: number },
       ): void => {
         if (!request.action) return;
+        // Never execute a queued action while a serve is in progress or in its
+        // post-serve grace window.  A stale request from the end of a rally can
+        // survive into the first serve frame; this guard is the last line of
+        // defence against it triggering a reception animation mid-serve.
+        if (serveSetupActive) { request.action = null; request.ttl = 0; return; }
         const playerSide: CourtSide = minZ < 0 ? 0 : 1;
 
         request.ttl = Math.max(0, request.ttl - deltaTime);
@@ -4142,6 +4609,26 @@ export async function main(): Promise<void> {
 
         if ((!rangeOk && !rangeOkAtContact) || !heightOk) return;
         if (isKickAction(request.action) && plannedPhase !== 'kick') return;
+
+        // After a reception pop-up the ball can be well above the kick-height window
+        // when it first starts descending.  Only apply the timing gate in that case
+        // (height > profile.maxHeight) so normal incoming kicks are never delayed.
+        // Require rawRatio >= 0.90 so the animation starts at most ~11 % slower than
+        // natural speed, meaning the ball is ≤ ~0.5 m above the contact bone when the
+        // player begins their swing — visually the kick starts just as the ball enters
+        // striking range.
+        if (isKickAction(request.action) && height > profile.maxHeight &&
+            animConfig && animConfig.contactFrame > 0) {
+          const contactH = root.position.y + (profile.fallbackY ?? 1.0);
+          const arrivalPred = BallPredictor.ballAtArrival(
+            ball.mesh.position.clone(), vel.clone(), contactH, gravityAbs,
+          );
+          if (arrivalPred.timeSeconds > 0.05) {
+            const naturalDuration = animConfig.contactFrame / ANIM_CONFIG_FPS;
+            const rawRatio = naturalDuration / arrivalPred.timeSeconds;
+            if (rawRatio < 0.90) return; // Ball still too high — wait for it to descend further
+          }
+        }
 
         triggerAction(character, root, motion, minZ, maxZ, assist, strikeState, request.action);
         if (assist.active) {
@@ -4446,26 +4933,39 @@ export async function main(): Promise<void> {
             }
 
             if (!ENABLE_BALL_MOTION_ASSIST) {
-              if (!inHeightWindow) {
-                return influenced;
-              }
-
-              if (effectiveContactDistance > profile.contactDistance && !canEarlyCapture) {
-                return influenced;
+              // Impact window = contact frame reached: fire unconditionally (ball will be
+              // snapped to the bone below).  Outside the window, keep existing gates.
+              if (!inImpactWindow) {
+                if (!inHeightWindow) {
+                  return influenced;
+                }
+                if (effectiveContactDistance > profile.contactDistance && !canEarlyCapture) {
+                  return influenced;
+                }
               }
             }
 
-            if (!ENABLE_BALL_MOTION_ASSIST && effectiveContactDistance > profile.contactDistance && canEarlyCapture) {
-              const toBallFlat = new Vector3(toBall.x, 0, toBall.z);
-              const toBallDir = toBallFlat.lengthSquared() > 1e-5
-                ? toBallFlat.normalize()
-                : new Vector3(0, 0, forwardSign);
-              const snapN = strikeToBall.lengthSquared() > 1e-5 ? strikeToBall.normalize() : toBallDir;
-              const snapDist = profile.contactDistance * 0.62;
-              ball.mesh.position.copyFrom(strikePos.add(snapN.scale(snapDist)));
+            // ── Ball position snap ───────────────────────────────────────────────────
+            // At the contact frame, teleport the ball onto the exact strike bone so
+            // the visual hit always coincides with the animated contact pose.
+            // Outside the impact window, only nudge toward the bone for early capture.
+            if (!ENABLE_BALL_MOTION_ASSIST) {
+              if (inImpactWindow && rootDistance <= 2.2 * SCALE) {
+                // Hard snap to bone — this is the visible contact point.
+                ball.mesh.position.copyFrom(strikePos);
+                ball.mesh.position.y = Math.max(ball.mesh.position.y, ballRadius);
+              } else if (!inImpactWindow && effectiveContactDistance > profile.contactDistance && canEarlyCapture) {
+                const toBallFlat = new Vector3(toBall.x, 0, toBall.z);
+                const toBallDir = toBallFlat.lengthSquared() > 1e-5
+                  ? toBallFlat.normalize()
+                  : new Vector3(0, 0, forwardSign);
+                const snapN = strikeToBall.lengthSquared() > 1e-5 ? strikeToBall.normalize() : toBallDir;
+                const snapDist = profile.contactDistance * 0.62;
+                ball.mesh.position.copyFrom(strikePos.add(snapN.scale(snapDist)));
+              }
             }
 
-            // Hard guarantee: at impact frame, force contact if needed.
+            // Hard guarantee (assist mode): at impact frame, force contact if needed.
             if (ENABLE_BALL_MOTION_ASSIST && effectiveContactDistance > profile.contactDistance) {
               const toBallFlat = new Vector3(toBall.x, 0, toBall.z);
               const toBallDir = toBallFlat.lengthSquared() > 1e-5
@@ -4507,34 +5007,54 @@ export async function main(): Promise<void> {
               pendingPrepSuperHigh[attackerSide] = false;
             }
 
-            if (touchPhase === 'reception') {
-              const incomingVel = physicsBody.getLinearVelocity();
-              const incomingSpeed = incomingVel.length();
-              const incomingDrop = Math.max(0, -incomingVel.y);
-              const verticalPop = Math.max(
-                2.20 * SCALE,
-                Math.min(7.6 * SCALE, 1.72 * SCALE + incomingSpeed * 0.42 + incomingDrop * 0.30),
-              );
-              const plannedKickAction = chooseActionForPhase('kick', getHeightBand(verticalPop), playerPos, ball.mesh.position);
-              const kickRise = getKickRiseProfile(plannedKickAction, attackerSide);
+            // Treat this contact as a reception pop-up if either the rally phase
+            // says 'reception' OR the queued animation is a reception-type clip.
+            // The action-type guard is the critical fallback for PURE_BALL_PHYSICS
+            // mode where getPlannedPhase() can momentarily lag behind the bounce
+            // counter (now fixed) and might still return 'defense' on the very
+            // first frame the contact fires.
+            const isReceptionActionType =
+              strikeState.action === 'receptionChest' ||
+              strikeState.action === 'receptionInnerRight' ||
+              strikeState.action === 'receptionToe';
 
-              physicsBody.setLinearVelocity(new Vector3(
-                kickRise.vx,
-                verticalPop * kickRise.vyMult,
-                kickRise.vz,
-              ));
+            if (touchPhase === 'reception' || isReceptionActionType) {
+              // Contact frame reached: ball has been snapped to the strike bone above.
+              // If the ball is too far away (sync was off / ball missed), cancel silently.
+              if (rootDistance > 2.2 * SCALE) {
+                assist.hitApplied = true;
+                assist.active = false;
+                assist.action = null;
+                strikeState.action = null;
+                strikeState.timer = 0;
+                return influenced;
+              }
+              // Teleport the ball to just above the player's head before applying
+              // velocity.  This does two things:
+              //  1. Clears the character's physics capsule entirely so Havok never
+              //     sees ball-vs-player overlap as it rises (prevents the dirty
+              //     lateral push from sliding off the mesh).
+              //  2. Locks XZ to the player root so the ball goes straight up from
+              //     the player's standing position regardless of where the bone was.
+              const characterHeight = 1.80 * SCALE;
+              // Place ball slightly in front of the player (toward the net) so it
+              // rises ahead of them rather than at/behind their root position.
+              const receptionForwardOffset = 0.30 * SCALE;
+              ball.mesh.position.x = playerPos.x;
+              ball.mesh.position.z = playerPos.z + receptionForwardOffset * forwardSign;
+              ball.mesh.position.y = playerPos.y + characterHeight + ballRadius;
+              // Apex = 2× the player's height above the player's feet.
+              const apexTarget = playerPos.y + 2.0 * characterHeight;
+              const arcHeight = Math.max(0.1 * SCALE, apexTarget - ball.mesh.position.y);
+              const recvVy = Math.sqrt(2.0 * gravityAbs * arcHeight);
+              physicsBody.setLinearVelocity(new Vector3(0, recvVy, 0));
               physicsBody.setAngularVelocity(Vector3.Zero());
-              addBallSpinTwist(0);
-
-              postKickLockTimer = 0;
-              postKickLockSpeed = 0;
-
               assist.hitApplied = true;
               assist.active = false;
               assist.action = null;
               strikeState.action = null;
               strikeState.timer = 0;
-              registerPlayerTouch(attackerSide);
+              registerPlayerTouch(playerSide);
               return true;
             }
 
@@ -4695,6 +5215,21 @@ export async function main(): Promise<void> {
               flatDir.z * horizontalSpeed,
             );
             physicsBody.setLinearVelocity(launchVelocity);
+
+            // Realistic topspin: angular velocity ≈ v/r around axes perpendicular
+            // to the kick direction so the ball visually rolls through the air.
+            // Scale by 0.70 so the spin decays pleasingly under angularDamping(0.2).
+            {
+              const spinScale = 0.70 / Math.max(0.001, ballRadius);
+              // Flat kick direction drives topspin; side-spin from ballSpinTwist drives yaw.
+              const physAngX =  launchVelocity.z * spinScale;
+              const physAngZ = -launchVelocity.x * spinScale;
+              // yaw: a fraction of the current visual twist (ballSpinTwist is set below)
+              const preTwist = flatDir.x * 7.5 + (strikeFamily === 'scissor' ? 3.5 : 1.8);
+              const physAngY = preTwist * 1.8; // amplify for visible side-spin
+              physicsBody.setAngularVelocity(new Vector3(physAngX, physAngY, physAngZ));
+            }
+
             if (!collisionDrill.enabled) {
               buildReceptionForecastFromLaunch(attackerSide, ball.mesh.position.clone(), launchVelocity);
             }
@@ -4886,14 +5421,15 @@ export async function main(): Promise<void> {
         };
       };
 
-      const p1ServeAnimLocked =
-        serveState.active &&
-        serveState.server === 0 &&
-        (serveState.phase === 'toss' || (serveState.phase === 'strike' && !serveState.strikeApplied));
-      const p2ServeAnimLocked =
-        serveState.active &&
-        serveState.server === 1 &&
-        (serveState.phase === 'toss' || (serveState.phase === 'strike' && !serveState.strikeApplied));
+      // Decrement per-player serve-anim timers (set when animation starts).
+      p1ServeAnimLockTimer = Math.max(0, p1ServeAnimLockTimer - deltaTime);
+      p2ServeAnimLockTimer = Math.max(0, p2ServeAnimLockTimer - deltaTime);
+
+      // Lock setMovement for the full clip duration so the kick frame and
+      // follow-through can play even after the physics state machine has
+      // deactivated the serve (missed contact window expires before kick frame).
+      const p1ServeAnimLocked = (serveState.active && serveState.server === 0) || p1ServeAnimLockTimer > 0;
+      const p2ServeAnimLocked = (serveState.active && serveState.server === 1) || p2ServeAnimLockTimer > 0;
 
       if (player1 && !p1ServeAnimLocked) {
         const local1 = getLocalMovement(p1MoveX, p1MoveZ, p1Motion.facing);
@@ -4917,6 +5453,12 @@ export async function main(): Promise<void> {
       }
 
       updateServeSequence(deltaTime);
+
+      // Serve-type selector HUD — visible only while server is in the ready phase.
+      updateServeSelectorUI(
+        serveState.serveType,
+        serveState.active && serveState.phase === 'ready',
+      );
 
       // UI updates are driven by EventBus and BabylonJS animations via UIManager.
 

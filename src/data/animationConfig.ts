@@ -52,11 +52,14 @@ const applyGlobalStartupTrim = (config: AnimConfig): AnimConfig => {
   };
 };
 
+// Raw frame data below is in the clip's native units (30 fps export from Blender).
+// `applyGlobalStartupTrim` will subtract GLOBAL_STARTUP_TRIM_FRAMES from every
+// frame reference before the values land in ANIM_CONFIG.
 const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
   soleKickRight: {
-    clipLengthFrames: 68,
-    contactFrame: 38,
-    contactWindow: [36, 40],
+    clipLengthFrames: 75,
+    contactFrame: 23,
+    contactWindow: [21, 26],
     activeBone: 'RightFootSocket',
     reach: 1.8,
     ballSpeed: SPEED_PRESET.HIGH,
@@ -66,9 +69,9 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   header: {
-    clipLengthFrames: 82,
-    contactFrame: 47,
-    contactWindow: [44, 53],
+    clipLengthFrames: 61,
+    contactFrame: 24,
+    contactWindow: [22, 27],
     activeBone: 'HeadSocket',
     reach: 1.5,
     ballSpeed: SPEED_PRESET.MEDIUM,
@@ -78,9 +81,9 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   chestKick: {
-    clipLengthFrames: 66,
-    contactFrame: 34,
-    contactWindow: [28, 40],
+    clipLengthFrames: 67,
+    contactFrame: 35,
+    contactWindow: [33, 38],
     activeBone: 'ChestSocket',
     reach: 1.4,
     ballSpeed: SPEED_PRESET.LOW,
@@ -90,9 +93,9 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   chestReception: {
-    clipLengthFrames: 26,
-    contactFrame: 13,
-    contactWindow: [12, 16],
+    clipLengthFrames: 74,
+    contactFrame: 51,
+    contactWindow: [48, 54],
     activeBone: 'ChestSocket',
     reach: 1.2,
     ballSpeed: SPEED_PRESET.CONTROL,
@@ -102,9 +105,9 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   closeTableLowHeader: {
-    clipLengthFrames: 72,
-    contactFrame: 39,
-    contactWindow: [29, 51],
+    clipLengthFrames: 52,
+    contactFrame: 24,
+    contactWindow: [22, 27],
     activeBone: 'HeadSocket',
     reach: 1.2,
     ballSpeed: SPEED_PRESET.MEDIUM,
@@ -114,10 +117,10 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   closeTableKickRight: {
-    clipLengthFrames: 72,
-    contactFrame: 26,
-    contactWindow: [23, 31],
-    activeBone: 'LeftFootSocket',
+    clipLengthFrames: 75,
+    contactFrame: 23,
+    contactWindow: [21, 26],
+    activeBone: 'RightFootSocket',
     reach: 1.2,
     ballSpeed: SPEED_PRESET.LOW,
     ballLoft: 0.4,
@@ -125,12 +128,31 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: 0,
     idleReturnRotY: 0,
   },
-  serve: {
-    clipLengthFrames: 146,
-    holdWindow: [4, 4],
-    tossFrame: 4,
-    contactFrame: 58,
-    contactWindow: [58, 71],
+  // headServeLeft = head serve where the left side of the head strikes the ball.
+  // Right hand tosses; BLH=26, contact=73, total=121 frames (30 fps Blender export).
+  headServeLeft: {
+    clipLengthFrames: 121,
+    holdWindow: [0, 26],
+    tossFrame: 26,
+    contactFrame: 73,
+    contactWindow: [71, 76],
+    serveHand: 'right',
+    activeBone: 'HeadSocket',
+    reach: 1.2,
+    ballSpeed: SPEED_PRESET.MEDIUM,
+    ballLoft: 0.4,
+    mirrorSafe: true,
+    preRotationY: -60,
+    idleReturnRotY: 30,
+  },
+  // headServeRight = head serve where the right side of the head strikes the ball.
+  // Left hand tosses; BLH=28, contact=69, total=104 frames.
+  headServeRight: {
+    clipLengthFrames: 104,
+    holdWindow: [0, 28],
+    tossFrame: 28,
+    contactFrame: 69,
+    contactWindow: [67, 72],
     serveHand: 'left',
     activeBone: 'HeadSocket',
     reach: 1.2,
@@ -140,10 +162,58 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: -60,
     idleReturnRotY: 30,
   },
+  // `serve` kept for back-compat; same data as headServeLeft.
+  serve: {
+    clipLengthFrames: 121,
+    holdWindow: [0, 26],
+    tossFrame: 26,
+    contactFrame: 73,
+    contactWindow: [71, 76],
+    serveHand: 'right',
+    activeBone: 'HeadSocket',
+    reach: 1.2,
+    ballSpeed: SPEED_PRESET.MEDIUM,
+    ballLoft: 0.4,
+    mirrorSafe: true,
+    preRotationY: -60,
+    idleReturnRotY: 30,
+  },
+  // serveLeft = foot serve with the LEFT foot (ServeLeftFoot clip).
+  serveLeft: {
+    clipLengthFrames: 120,
+    holdWindow: [0, 21],
+    tossFrame: 21,
+    contactFrame: 65,
+    contactWindow: [63, 68],
+    serveHand: 'right',
+    activeBone: 'LeftFootSocket',
+    reach: 1.2,
+    ballSpeed: SPEED_PRESET.HIGH,  // foot serves hit harder than head serves
+    ballLoft: 0.4,
+    mirrorSafe: true,
+    preRotationY: -60,
+    idleReturnRotY: 30,
+  },
+  // serveRight = foot serve with the RIGHT foot (ServeRightFoot clip).
+  serveRight: {
+    clipLengthFrames: 120,
+    holdWindow: [0, 44],
+    tossFrame: 44,
+    contactFrame: 92,
+    contactWindow: [90, 95],
+    serveHand: 'left',
+    activeBone: 'RightFootSocket',
+    reach: 1.2,
+    ballSpeed: SPEED_PRESET.HIGH,  // foot serves hit harder than head serves
+    ballLoft: 0.4,
+    mirrorSafe: true,
+    preRotationY: -60,
+    idleReturnRotY: 30,
+  },
   highKickLeft: {
-    clipLengthFrames: 92,
-    contactFrame: 47,
-    contactWindow: [44, 53],
+    clipLengthFrames: 85,
+    contactFrame: 40,
+    contactWindow: [38, 43],
     activeBone: 'LeftFootSocket',
     reach: 1.2,
     ballSpeed: SPEED_PRESET.SUPER_HIGH,
@@ -153,7 +223,7 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   jogBack: {
-    clipLengthFrames: 62,
+    clipLengthFrames: 53,
     contactFrame: 0,
     activeBone: '',
     reach: 0,
@@ -164,7 +234,7 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   jogForward: {
-    clipLengthFrames: 70,
+    clipLengthFrames: 72,
     contactFrame: 0,
     activeBone: '',
     reach: 0,
@@ -175,7 +245,7 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 0,
   },
   strafeRight: {
-    clipLengthFrames: 128,
+    clipLengthFrames: 40,
     contactFrame: 0,
     activeBone: '',
     reach: 0,
@@ -185,10 +255,11 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: 0,
     idleReturnRotY: 0,
   },
+  // bridgeReception1Left → innerrightfootreception (right foot reception clip).
   bridgeReception1Left: {
-    clipLengthFrames: 40,
-    contactFrame: 22,
-    contactWindow: [20, 23],
+    clipLengthFrames: 72,
+    contactFrame: 48,
+    contactWindow: [45, 51],
     activeBone: 'RightFootSocket',
     reach: 1.4,
     ballSpeed: SPEED_PRESET.LOW,
@@ -197,22 +268,11 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: 0,
     idleReturnRotY: 0,
   },
-  bridgeReception2Left: {
-    clipLengthFrames: 40,
-    contactFrame: 22,
-    contactWindow: [20, 23],
-    activeBone: 'RightFootSocket',
-    reach: 1.4,
-    ballSpeed: SPEED_PRESET.LOW,
-    ballLoft: 0.8,
-    mirrorSafe: true,
-    preRotationY: 0,
-    idleReturnRotY: 0,
-  },
+  // jumpingHeaderKick → rightheadkick.
   jumpingHeaderKick: {
-    clipLengthFrames: 102,
-    contactFrame: 35,
-    contactWindow: [28, 37],
+    clipLengthFrames: 53,
+    contactFrame: 16,
+    contactWindow: [14, 19],
     activeBone: 'HeadSocket',
     reach: 1.4,
     ballSpeed: SPEED_PRESET.MEDIUM,
@@ -221,10 +281,11 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: -60,
     idleReturnRotY: 0,
   },
+  // toeReceptionRight → innerrightfootreception (same clip as bridgeReception1Left).
   toeReceptionRight: {
-    clipLengthFrames: 46,
-    contactFrame: 30,
-    contactWindow: [29, 33],
+    clipLengthFrames: 72,
+    contactFrame: 48,
+    contactWindow: [45, 51],
     activeBone: 'RightFootSocket',
     reach: 1.4,
     ballSpeed: SPEED_PRESET.MEDIUM,
@@ -233,10 +294,11 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: 0,
     idleReturnRotY: 0,
   },
+  // knee1 → rightkneereception.
   knee1: {
-    clipLengthFrames: 46,
-    contactFrame: 30,
-    contactWindow: [29, 33],
+    clipLengthFrames: 76,
+    contactFrame: 40,
+    contactWindow: [37, 43],
     activeBone: 'RightFootSocket',
     reach: 1.4,
     ballSpeed: SPEED_PRESET.MEDIUM,
@@ -245,10 +307,11 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: 0,
     idleReturnRotY: 0,
   },
+  // bicycleKickLeft → leftfootkick (same clip as highKickLeft & scissorKick).
   bicycleKickLeft: {
-    clipLengthFrames: 114,
-    contactFrame: 45,
-    contactWindow: [43, 48],
+    clipLengthFrames: 85,
+    contactFrame: 40,
+    contactWindow: [38, 43],
     activeBone: 'LeftFootSocket',
     reach: 1.4,
     ballSpeed: SPEED_PRESET.SUPER_HIGH,
@@ -257,10 +320,11 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     preRotationY: -60,
     idleReturnRotY: 180,
   },
+  // scissorKick → leftfootkick.
   scissorKick: {
-    clipLengthFrames: 114,
-    contactFrame: 45,
-    contactWindow: [43, 48],
+    clipLengthFrames: 85,
+    contactFrame: 40,
+    contactWindow: [38, 43],
     activeBone: 'LeftFootSocket',
     reach: 1.4,
     ballSpeed: SPEED_PRESET.SUPER_HIGH,
@@ -270,7 +334,7 @@ const RAW_ANIM_CONFIG: Record<string, AnimConfig> = {
     idleReturnRotY: 180,
   },
   idle: {
-    clipLengthFrames: 48,
+    clipLengthFrames: 40,
     contactFrame: 0,
     activeBone: '',
     reach: 0,
@@ -319,7 +383,6 @@ const CLIP_TO_CONFIG_KEY: Record<string, keyof typeof ANIM_CONFIG> = {
   chestReception: 'chestReception',
 
   bridgeReception1Left: 'bridgeReception1Left',
-  bridgeReception2Left: 'bridgeReception2Left',
 
   knee1: 'knee1',
   toeReceptionRight: 'toeReceptionRight',
@@ -333,10 +396,12 @@ const CLIP_TO_CONFIG_KEY: Record<string, keyof typeof ANIM_CONFIG> = {
   strafeRight: 'strafeRight',
   idle: 'idle',
   serve: 'serve',
-  serveLeft: 'serve',
-  serveRight: 'serve',
-  headerBall1: 'serve',
-  headerBall2: 'serve',
+  serveLeft: 'serveLeft',
+  serveRight: 'serveRight',
+  headServeLeft: 'headServeLeft',
+  headServeRight: 'headServeRight',
+  headerBall1: 'serveLeft',
+  headerBall2: 'serveRight',
 };
 
 export const ANIM_CONFIG_FPS = 30;

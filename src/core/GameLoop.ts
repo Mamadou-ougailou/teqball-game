@@ -1,22 +1,31 @@
 import { IEntity } from '@core/interfaces';
 
-/**
- * GameLoop - Registers all IEntity instances
- * Calls update(delta) on each in correct order each frame
- * TODO Phase 1: Orchestrate update order for all game systems
- */
 export class GameLoop implements IEntity {
-  private entities: IEntity[] = [];
+  private _entities: IEntity[] = [];
 
-  registerEntity(_entity: IEntity): void {
-    // TODO Phase 1
+  registerEntity(entity: IEntity): void {
+    if (!this._entities.includes(entity)) {
+      this._entities.push(entity);
+    }
   }
 
-  update(_deltaTime: number): void {
-    // TODO Phase 1: Call update on all registered entities
+  unregisterEntity(entity: IEntity): void {
+    const idx = this._entities.indexOf(entity);
+    if (idx !== -1) {
+      this._entities.splice(idx, 1);
+    }
+  }
+
+  update(deltaTime: number): void {
+    for (const entity of this._entities) {
+      entity.update(deltaTime);
+    }
   }
 
   dispose(): void {
-    // TODO Phase 1: Dispose all entities in reverse order
+    for (let i = this._entities.length - 1; i >= 0; i--) {
+      this._entities[i].dispose();
+    }
+    this._entities = [];
   }
 }

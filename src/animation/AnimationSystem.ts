@@ -17,87 +17,89 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 // re-points every group's targets to skeleton 0 so all clips visually animate.
 // ---------------------------------------------------------------------------
 export const PLAYER_ANIM_NAMES: Record<string, string> = {
-  idle:         'idle',
-  jogForward:   'jogforward',
-  jogBack:      'jogbackward',
-  strafeLeft:   'jogstraferight',
-  strafeRight:  'jogstraferight',
-  reception:    'reception',
-  serve:        'hearserve',
-  kick2:        'kick',
-  scissorKick:  'scissor',
-  scissorKickLeft: 'scissor',
-  header:       'headkick',
-  headerBall1:  'hearserve',
-  headerBall2:  'hearserve',
-  jogBackDiag1: 'jogbackward',
-  jogBackDiag2: 'jogbackward',
-  jogFwdDiag1:  'jogforward',
-  jogFwdDiag2:  'jogforward',
-  kick1:        'kick',
-  knee1:        'righttoefootreception',
-  knee1Left:    'righttoefootreception',
-  knee2:        'righttoefootreception',
-  serveLeft:    'hearserve',
-  serveRight:   'hearserve',
-  chestKick:    'chest_kick',
-  chestReception: 'chestreception',
-  closeTableLowHeader: 'closetablelowheadkick',
-  closeTableKickRight: 'closetablerightfootkick',
-  highKickLeft: 'highkickleftfoot',
-  runningForward: 'jogforward',
-  joggingQuickForward: 'quickjogforward',
+  idle:               'idle',
+  jogForward:         'jogforward',
+  jogBack:            'jogbackward',
+  strafeLeft:         'jogstrafeleft',
+  strafeRight:        'jogstraferight',
+  reception:          'chestreception',
+  serve:              'serveleftfoot',
+  kick2:              'rightfootkick',
+  scissorKick:        'leftfootkick',
+  scissorKickLeft:    'leftfootkick',
+  header:             'centerheadkick',
+  headerBall1:        'serveleftfoot',
+  headerBall2:        'serverightfoot',
+  jogBackDiag1:       'jogbackward',
+  jogBackDiag2:       'jogbackward',
+  jogFwdDiag1:        'jogforward',
+  jogFwdDiag2:        'jogforward',
+  kick1:              'rightfootkick',
+  knee1:              'rightkneereception',
+  knee1Left:          'leftkneereception',
+  knee2:              'rightkneereception',
+  serveLeft:          'serveleftfoot',
+  serveRight:         'serverightfoot',
+  headServeLeft:      'headserveleft',
+  headServeRight:     'headserveright',
+  chestKick:          'chestkick',
+  chestReception:     'chestreception',
+  closeTableLowHeader: 'leftheadkick',
+  closeTableKickRight: 'rightfootkick',
+  highKickLeft:       'leftfootkick',
+  runningForward:     'jogforward',
+  joggingQuickForward: 'jogforward',
   joggingStrafeQuick: 'jogstraferight',
-  kneeReceptionRight: 'righttoefootreception',
-  soleKickRight: 'solerightfootkick',
-  toeReceptionRight: 'righttoefootreception',
-  bridgeReception1Left: 'jogforward.001',
-  bridgeReception2Left: 'jogforward.001',
-  bicycleKickLeft: 'bicycle',
-  jumpingHeaderKick: 'jumpheadkick',
-  extra:        'extra',
+  kneeReceptionRight: 'rightkneereception',
+  soleKickRight:      'rightfootkick',
+  toeReceptionRight:  'innerrightfootreception',
+  bridgeReception1Left: 'innerrightfootreception',
+  bicycleKickLeft:    'leftfootkick',
+  jumpingHeaderKick:  'rightheadkick',
+  extra:              'idle',
 };
 
 const PLAYER_ANIM_ALIASES: Record<string, string[]> = {
-  idle: ['idle'],
-  jogForward: ['jogforward', 'jog forward', 'running forward'],
-  jogBack: ['jogbackward', 'jog backward', 'backward'],
-  strafeLeft: ['jogstraferight', 'jog strafe right', 'strafe right'],
-  strafeRight: ['jogstraferight', 'jog strafe right', 'strafe right'],
-  reception: ['reception'],
-  serve: ['hearserve', 'hear serve', 'serve'],
-  kick2: ['kick'],
-  scissorKick: ['scissor'],
-  scissorKickLeft: ['scissor'],
-  header: ['headkick'],
-  headerBall1: ['hearserve'],
-  headerBall2: ['hearserve'],
-  jogBackDiag1: ['jogbackward'],
-  jogBackDiag2: ['jogbackward'],
-  jogFwdDiag1: ['jogforward'],
-  jogFwdDiag2: ['jogforward'],
-  kick1: ['kick'],
-  knee1: ['righttoefootreception'],
-  knee1Left: ['righttoefootreception'],
-  knee2: ['righttoefootreception'],
-  serveLeft: ['hearserve'],
-  serveRight: ['hearserve'],
-  chestKick: ['chest_kick'],
-  chestReception: ['chestreception'],
-  closeTableLowHeader: ['closetablelowheadkick'],
-  closeTableKickRight: ['closetablerightfootkick'],
-  highKickLeft: ['highkickleftfoot'],
-  runningForward: ['jogforward'],
-  joggingQuickForward: ['quickjogforward'],
+  idle:               ['idle'],
+  jogForward:         ['jogforward', 'jog forward', 'running forward'],
+  jogBack:            ['jogbackward', 'jog backward', 'backward'],
+  strafeLeft:         ['jogstrafeleft', 'jog strafe left', 'strafe left'],
+  strafeRight:        ['jogstraferight', 'jog strafe right', 'strafe right'],
+  reception:          ['chestreception', 'reception'],
+  serve:              ['serveleftfoot', 'serve'],
+  kick2:              ['rightfootkick', 'kick'],
+  scissorKick:        ['leftfootkick', 'scissor'],
+  scissorKickLeft:    ['leftfootkick', 'scissor'],
+  header:             ['centerheadkick', 'headkick'],
+  headerBall1:        ['serveleftfoot'],
+  headerBall2:        ['serverightfoot'],
+  jogBackDiag1:       ['jogbackward'],
+  jogBackDiag2:       ['jogbackward'],
+  jogFwdDiag1:        ['jogforward'],
+  jogFwdDiag2:        ['jogforward'],
+  kick1:              ['rightfootkick', 'kick'],
+  knee1:              ['rightkneereception', 'kneereception'],
+  knee1Left:          ['leftkneereception'],
+  knee2:              ['rightkneereception', 'kneereception'],
+  serveLeft:          ['serveleftfoot'],
+  serveRight:         ['serverightfoot'],
+  headServeLeft:      ['headserveleft'],
+  headServeRight:     ['headserveright'],
+  chestKick:          ['chestkick', 'chest'],
+  chestReception:     ['chestreception'],
+  closeTableLowHeader: ['leftheadkick'],
+  closeTableKickRight: ['rightfootkick'],
+  highKickLeft:       ['leftfootkick'],
+  runningForward:     ['jogforward'],
+  joggingQuickForward: ['jogforward'],
   joggingStrafeQuick: ['jogstraferight'],
-  kneeReceptionRight: ['righttoefootreception'],
-  soleKickRight: ['solerightfootkick'],
-  toeReceptionRight: ['righttoefootreception'],
-  bridgeReception1Left: ['jogforward.001', 'innerrightfootreception'],
-  bridgeReception2Left: ['jogforward.001', 'innerrightfootreception'],
-  bicycleKickLeft: ['bicycle'],
-  jumpingHeaderKick: ['jumpheadkick'],
-  extra: ['extra'],
+  kneeReceptionRight: ['rightkneereception'],
+  soleKickRight:      ['rightfootkick'],
+  toeReceptionRight:  ['innerrightfootreception'],
+  bridgeReception1Left: ['innerrightfootreception'],
+  bicycleKickLeft:    ['leftfootkick'],
+  jumpingHeaderKick:  ['rightheadkick'],
+  extra:              ['idle'],
 };
 
 // Kept for backwards compatibility — all resolve to -1 (name lookup) now.
@@ -134,6 +136,8 @@ const PLAYER_ANIM_ORDER: PlayerAnimKey[] = [
   'knee2',
   'serveLeft',
   'serveRight',
+  'headServeLeft',
+  'headServeRight',
   'chestKick',
   'chestReception',
   'closeTableLowHeader',
@@ -146,38 +150,10 @@ const PLAYER_ANIM_ORDER: PlayerAnimKey[] = [
   'soleKickRight',
   'toeReceptionRight',
   'bridgeReception1Left',
-  'bridgeReception2Left',
   'bicycleKickLeft',
   'jumpingHeaderKick',
   'extra',
 ];
-
-const NEYMAR_EXACT_INDEX_MAP: Partial<Record<PlayerAnimKey, number>> = {
-  jogBack: 40,
-  bicycleKickLeft: 2,
-  bridgeReception1Left: 42,
-  bridgeReception2Left: 42,
-  chestKick: 31,
-  chestReception: 32,
-  closeTableLowHeader: 33,
-  closeTableKickRight: 35,
-  header: 36,
-  headerBall1: 37,
-  highKickLeft: 38,
-  idle: 39,
-  jogForward: 41,
-  strafeLeft: 44,
-  strafeRight: 44,
-  jumpingHeaderKick: 45,
-  joggingQuickForward: 46,
-  knee1: 48,
-  kneeReceptionRight: 48,
-  runningForward: 41,
-  serveLeft: 37,
-  serveRight: 37,
-  soleKickRight: 50,
-  toeReceptionRight: 48,
-};
 
 const MOVEMENT_KEYS = new Set<PlayerAnimKey>([
   'idle',
@@ -298,11 +274,10 @@ export class AnimationSystem {
       }
     }
 
-    // Apply exact index overrides: prefer charData.indexMap, fall back to
-    // the hardcoded Neymar map when the clip set is auto-detected as Neymar.
-    const indexMapSource = charData?.indexMap ?? (this._looksLikeNeymarTrackSet() ? NEYMAR_EXACT_INDEX_MAP : null);
+    // Apply exact index overrides only when explicit character metadata provides them.
+    const indexMapSource = charData?.indexMap ?? null;
     if (indexMapSource) {
-      const label = charData?.indexMap ? 'char' : 'neymar';
+      const label = 'char';
       for (const [key, idx] of Object.entries(indexMapSource)) {
         if (idx !== undefined && idx >= 0 && idx < this._clips.length) {
           this._indexByKey.set(key, idx);
@@ -312,14 +287,10 @@ export class AnimationSystem {
     }
   }
 
-  private _looksLikeNeymarTrackSet(): boolean {
-    if (this._clips.length < 30) return false;
-    const names = this._clips.map(c => c.name);
-    const hasBridge = names.some(n => n.toLowerCase().includes('bridgereceptionleftfoot'));
-    const hasChest = names.some(n => n.toLowerCase().includes('chestreception'));
-    const hasServe = names.some(n => n.toLowerCase().includes('serveleftfoot'));
-    const hasIdle = names.some(n => n.toLowerCase().includes('idle'));
-    return hasBridge && hasChest && hasServe && hasIdle;
+  /** Strip everything except a-z 0-9 so 'Serve_Left_Foot', 'serve left foot',
+   *  and 'serveleftfoot' all normalise to the same token. */
+  private static _norm(s: string): string {
+    return s.toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
   private _findBestClipIndex(fragments: string[], excludedFragments: string[] = []): number {
@@ -328,16 +299,19 @@ export class AnimationSystem {
     let bestIndex = -1;
     let bestScore = -1;
     for (let i = 0; i < this._clips.length; i++) {
-      const name = this._clips[i].name.toLowerCase();
+      const name    = this._clips[i].name.toLowerCase();
+      const nameN   = AnimationSystem._norm(this._clips[i].name);
       if (excludedFragments.some(fragment => fragment && name.includes(fragment))) {
         continue;
       }
       for (const fragment of fragments) {
-        const f = fragment.trim().toLowerCase();
+        const f  = fragment.trim().toLowerCase();
+        const fn = AnimationSystem._norm(fragment);
         if (!f) continue;
-        if (name.includes(f)) {
+        // Primary: raw substring match; secondary: separator-agnostic match.
+        if (name.includes(f) || nameN.includes(fn)) {
           // Longer/more specific fragment gets higher score.
-          const score = f.length;
+          const score = fn.length;
           if (score > bestScore) {
             bestScore = score;
             bestIndex = i;
@@ -364,6 +338,29 @@ export class AnimationSystem {
   }
 
   get activeIndex(): number { return this._activeIndex; }
+
+  /**
+   * Returns the current frame of the active animation group (in the clip's native
+   * frame units), or null if no clip is playing. Used to drive kinematic effects
+   * that must be synchronized with the animation regardless of clip FPS.
+   */
+  getActiveMasterFrame(): number | null {
+    if (!this._active) return null;
+    const animatable = this._active.animatables?.[0];
+    if (!animatable) return null;
+    const f = animatable.masterFrame;
+    return Number.isFinite(f) ? f : null;
+  }
+
+  /** Returns the active clip's `from` frame, or null if no clip is playing. */
+  getActiveClipFrom(): number | null {
+    return this._active ? this._active.from : null;
+  }
+
+  /** Returns the currently-playing AnimationGroup, or null. */
+  getActiveGroup(): AnimationGroup | null {
+    return this._active;
+  }
 
   getClipByIndex(index: number): AnimationGroup | null {
     if (index < 0 || index >= this._clips.length) return null;

@@ -3,7 +3,6 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
-import { GlowLayer } from '@babylonjs/core/Layers/glowLayer';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import HavokPhysics from '@babylonjs/havok';
 import { HavokPlugin } from '@babylonjs/core/Physics/v2/Plugins/havokPlugin';
@@ -11,7 +10,7 @@ import { BabylonEngine } from './Engine';
 import { SCALE } from '../config/GameConfig';
 
 export class SceneBuilder {
-  public static async createSurrealisticScene(canvas: HTMLCanvasElement): Promise<{
+  public static async createSurrealisticScene(canvas: HTMLCanvasElement, options?: { debug?: boolean }): Promise<{
     engine: BabylonEngine;
     scene: Scene;
     camera: ArcRotateCamera;
@@ -47,17 +46,15 @@ export class SceneBuilder {
     light.diffuse = new Color3(0.5, 0.3, 0.9); // Surreal purple/blue
     light.groundColor = new Color3(0.1, 0.0, 0.2);
 
-    // Surreal Post Processing
-    const glowLayer = new GlowLayer("glow", scene);
-    glowLayer.intensity = 1.5;
-
-    const pipeline = new DefaultRenderingPipeline("default", true, scene, [camera]);
-    pipeline.chromaticAberrationEnabled = true;
-    pipeline.chromaticAberration.aberrationAmount = 25;
-    pipeline.chromaticAberration.radialIntensity = 1;
-    pipeline.bloomEnabled = true;
-    pipeline.bloomThreshold = 0.7;
-    pipeline.bloomWeight = 0.6;
+    if (!options?.debug) {
+      const pipeline = new DefaultRenderingPipeline("default", true, scene, [camera]);
+      pipeline.chromaticAberrationEnabled = true;
+      pipeline.chromaticAberration.aberrationAmount = 25;
+      pipeline.chromaticAberration.radialIntensity = 1;
+      pipeline.bloomEnabled = true;
+      pipeline.bloomThreshold = 0.7;
+      pipeline.bloomWeight = 0.6;
+    }
 
     // Initialize physics engine
     const havokInstance = await HavokPhysics({

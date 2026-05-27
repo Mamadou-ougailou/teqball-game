@@ -37,11 +37,13 @@ export class AssetManager implements IEntity {
   // Map model name → GLB path served under /models/
   private static readonly _paths: Record<string, string> = {
     ball01:    'ball01.glb',
-    character: 'Neymar.glb',
-    player:    'Neymar.glb',
-    player_alien: 'Neymar.glb',
-    alien: 'Neymar.glb',
-    neymar: 'Neymar.glb',
+    character: 'Messi.glb',
+    player:    'Messi.glb',
+    player_alien: 'Howard.glb',
+    alien: 'Howard.glb',
+    messi: 'Messi.glb',
+    maradona: 'Maradona.glb',
+    howard: 'Howard.glb',
     bleachers: 'bleachers.glb',
   };
 

@@ -11,8 +11,11 @@ interface PlayerBindings {
 }
 
 const DEFAULT_BINDINGS: [PlayerBindings, PlayerBindings] = [
-  { left: 'a', right: 'd', forward: 'w', backward: 's', kick: 'space', serve: 'space' },
-  { left: 'arrowleft', right: 'arrowright', forward: 'arrowup', backward: 'arrowdown', kick: 'u', serve: 'enter' },
+  // P1: arrow keys (direction pad) + Space to kick/serve.
+  // forward='arrowdown' → -Z (retreat), backward='arrowup' → +Z (advance toward net).
+  { left: 'arrowleft', right: 'arrowright', forward: 'arrowdown', backward: 'arrowup', kick: 'space', serve: 'space' },
+  // P2: AI-controlled; bindings kept for potential manual override (WASD).
+  { left: 'a', right: 'd', forward: 'w', backward: 's', kick: 'u', serve: 'enter' },
 ];
 
 /**
