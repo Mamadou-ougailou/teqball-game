@@ -7,7 +7,7 @@
 // ============== PHYSICS ==============
 export const GRAVITY = -9.81; // m/s²
 export const BALL_MASS = 0.43; // kg (official teqball ball)
-export const BALL_RADIUS = 0.11; // m (diameter 22cm)
+export const BALL_RADIUS = 0.105; // m (slightly larger ball for cleaner table bounces)
 export const BALL_RESTITUTION = 0.75; // bounce 0-1
 export const BALL_FRICTION = 0.3; // rolling friction
 export const BALL_LINEAR_DAMPING = 0.02;
@@ -15,8 +15,8 @@ export const BALL_ANGULAR_DAMPING = 0.05;
 
 export const CHARACTER_MASS = 70; // kg (average)
 export const CHARACTER_FRICTION = 0.5;
-export const CHARACTER_HEIGHT = 1.8; // m
-export const CHARACTER_RADIUS = 0.3; // m (collision radius)
+export const CHARACTER_HEIGHT = 1.72; // m
+export const CHARACTER_RADIUS = 0.28; // m (collision radius)
 
 // ============== TABLE DIMENSIONS ==============
 export const TABLE_LENGTH = 16.8; // m

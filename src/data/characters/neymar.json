@@ -49,6 +49,9 @@
     "bridgeReception2Left":  "jogforward.001",
     "bicycleKickLeft":       "bicycle",
     "jumpingHeaderKick":     "jumpheadkick",
+    "celebration":           "celebration1",
+    "celebrationAlt":        "celebration2",
+    "defeat":                "defeat",
     "extra":                 "extra"
   },
   "indexMap": {

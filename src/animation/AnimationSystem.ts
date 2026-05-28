@@ -56,6 +56,9 @@ export const PLAYER_ANIM_NAMES: Record<string, string> = {
   bridgeReception1Left: 'innerrightfootreception',
   bicycleKickLeft:    'leftfootkick',
   jumpingHeaderKick:  'rightheadkick',
+  celebration:        'celebration1',
+  celebrationAlt:     'celebration2',
+  defeat:             'defeat',
   extra:              'idle',
 };
 
@@ -99,6 +102,9 @@ const PLAYER_ANIM_ALIASES: Record<string, string[]> = {
   bridgeReception1Left: ['innerrightfootreception'],
   bicycleKickLeft:    ['leftfootkick'],
   jumpingHeaderKick:  ['rightheadkick'],
+  celebration:        ['celebration1', 'celebration'],
+  celebrationAlt:     ['celebration2'],
+  defeat:             ['defeat'],
   extra:              ['idle'],
 };
 
@@ -130,9 +136,6 @@ const PLAYER_ANIM_ORDER: PlayerAnimKey[] = [
   'headerBall2',
   'jogBackDiag1',
   'jogBackDiag2',
-  'jogFwdDiag1',
-  'jogFwdDiag2',
-  'kick1',
   'knee2',
   'serveLeft',
   'serveRight',
@@ -165,6 +168,9 @@ const MOVEMENT_KEYS = new Set<PlayerAnimKey>([
   'jogBackDiag2',
   'jogFwdDiag1',
   'jogFwdDiag2',
+  'runningForward',
+  'joggingQuickForward',
+  'joggingStrafeQuick',
 ]);
 
 const MOVEMENT_EXCLUDES = ['reception', 'receive', 'control', 'serve', 'kick', 'header', 'knee', 'scissor'];
@@ -241,7 +247,9 @@ export class AnimationSystem {
     });
 
     // Build a robust logical-key -> clip index mapping from GLB clip names.
-    const keyMapSource = charData?.keyMap ?? PLAYER_ANIM_NAMES;
+    const keyMapSource = charData?.keyMap
+      ? { ...PLAYER_ANIM_NAMES, ...charData.keyMap }
+      : PLAYER_ANIM_NAMES;
     let mappedCount = 0;
     for (const key of Object.keys(keyMapSource)) {
       const preferred = keyMapSource[key]?.toLowerCase();

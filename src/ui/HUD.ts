@@ -25,11 +25,14 @@ export class HUD implements IEntity {
   private _p1ScoreText!: TextBlock;
   private _p2ScoreText!: TextBlock;
   private _setCounterText!: TextBlock;
+  private _countdownText!: TextBlock;
 
   private readonly _onPointScored: (data: unknown) => void;
+  private readonly _onCountdown: (data: unknown) => void;
 
   constructor(adt: AdvancedDynamicTexture) {
     this._buildUI(adt);
+    this._buildCountdownOverlay(adt);
 
     this._onPointScored = (data: unknown) => {
       const e = data as PointScoredEvent;
@@ -38,7 +41,13 @@ export class HUD implements IEntity {
       this._setCounterText.text = `${e.sets[0]}  —  ${e.sets[1]}`;
     };
 
+    this._onCountdown = (data: unknown) => {
+      const seconds = data as number | null;
+      this.setCountdown(seconds);
+    };
+
     EventBus.on('match:pointScored', this._onPointScored);
+    EventBus.on('serve:countdown', this._onCountdown);
   }
 
   private _buildUI(adt: AdvancedDynamicTexture): void {
@@ -137,6 +146,36 @@ export class HUD implements IEntity {
     p2Col.addControl(this._p2ScoreText);
   }
 
+  /**
+   * Pre-serve countdown.  Pass remaining seconds (3, 2, 1) or `null` to hide.
+   */
+  setCountdown(secondsRemaining: number | null): void {
+    if (secondsRemaining === null || secondsRemaining <= 0) {
+      this._countdownText.isVisible = false;
+      this._countdownText.text = '';
+      return;
+    }
+    const displayed = Math.max(1, Math.ceil(secondsRemaining));
+    this._countdownText.text = String(displayed);
+    this._countdownText.isVisible = true;
+  }
+
+  private _buildCountdownOverlay(adt: AdvancedDynamicTexture): void {
+    this._countdownText = new TextBlock('serveCountdown', '');
+    this._countdownText.color = '#ffeb3b';
+    this._countdownText.fontSize = 220;
+    this._countdownText.fontWeight = 'bold';
+    this._countdownText.fontFamily = 'monospace';
+    this._countdownText.shadowColor = 'black';
+    this._countdownText.shadowBlur = 12;
+    this._countdownText.shadowOffsetX = 4;
+    this._countdownText.shadowOffsetY = 4;
+    this._countdownText.horizontalAlignment = Control.HORIZONTAL_ALIGNMENT_CENTER;
+    this._countdownText.verticalAlignment = Control.VERTICAL_ALIGNMENT_CENTER;
+    this._countdownText.isVisible = false;
+    adt.addControl(this._countdownText);
+  }
+
   updateCooldown(_ability: string, _percent: number): void {
     // TODO Phase 4: CooldownRing
   }
@@ -147,6 +186,7 @@ export class HUD implements IEntity {
 
   dispose(): void {
     EventBus.off('match:pointScored', this._onPointScored);
+    EventBus.off('serve:countdown', this._onCountdown);
     this._container.dispose();
   }
 }

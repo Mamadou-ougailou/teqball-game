@@ -40,6 +40,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import { Ball } from './entities/Ball';
 import { Character } from './entities/Character';
+import { PointVFXSystem } from './systems/PointVFXSystem';
 import { CharacterStats } from './core/interfaces';
 import { MatchManager } from './gameplay/MatchManager';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
@@ -91,6 +92,7 @@ let matchManager: MatchManager;
 let inputManager: InputManager;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let uiManager: UIManager | undefined;
+let pointVFXSystem: PointVFXSystem | undefined;
 
 const pressedKeys = new Set<string>();
 const controlKeys = new Set(['arrowleft', 'arrowright', 'arrowup', 'arrowdown', 'a', 'd', 'w', 's', 'space']);
@@ -273,6 +275,8 @@ const POST_SERVE_GRACE_SECONDS = 1.4;
 // a locomotion clip the very next frame.
 let p1ServeAnimLockTimer = 0;
 let p2ServeAnimLockTimer = 0;
+let pointResultAnimationsActive = 0;
+let pointResultAnimationToken = 0;
 
 export async function main(): Promise<void> {
   try {
@@ -330,6 +334,10 @@ export async function main(): Promise<void> {
       halfLength: 1.5 * TABLE_SCALE,
       surfaceY: 0.76 * TABLE_SCALE,
     };
+    const DEBUG_POST_RECEPTION_KICK = true;
+    const BALL_SIZE_SCALE = 0.95;
+    const PLAYER_SIZE_SCALE = 0.95;
+    const tableSurfaceEdgeDrop = 0.195 * TABLE_SCALE;
 
     // ── Load bleachers.glb (stands + playing surface + Teqboard visual) ──────
     const bleachersData = await assetManager.loadModel('bleachers');
@@ -353,6 +361,20 @@ export async function main(): Promise<void> {
       tableProfile.halfWidth = Math.min(sizeX, sizeZ) * 0.5;
       tableProfile.halfLength = Math.max(sizeX, sizeZ) * 0.5;
       tableProfile.surfaceY = bounds.max.y;
+    }
+
+    if (DEBUG_POST_RECEPTION_KICK) {
+      console.log('[table-debug] bleachers table profile', {
+        meshName: tableBoundsMesh?.name ?? null,
+        hasTableMesh: !!tableBoundsMesh,
+        tableProfile: {
+          centerX: tableProfile.centerX,
+          centerZ: tableProfile.centerZ,
+          halfWidth: tableProfile.halfWidth,
+          halfLength: tableProfile.halfLength,
+          surfaceY: tableProfile.surfaceY,
+        },
+      });
     }
 
     // All world collisions now come from bleachers.glb geometry.
@@ -476,9 +498,15 @@ export async function main(): Promise<void> {
     // Fully procedural ball (visual + physics) to avoid GLB hierarchy issues
     // during serve toss and strike contact windows.
 
-    const desiredDiameter = 0.22 * SCALE;
+    const desiredDiameter = 0.22 * SCALE * BALL_SIZE_SCALE;
     const ballRadius = desiredDiameter / 2;
-    const getTableBallContactY = (): number => tableProfile.surfaceY + ballRadius;
+    const getTableSurfaceYAt = (worldZ = tableProfile.centerZ): number => {
+      const halfLength = Math.max(0.001, tableProfile.halfLength);
+      const localZ = Math.max(-halfLength, Math.min(halfLength, worldZ - tableProfile.centerZ));
+      const normalized = localZ / halfLength;
+      return tableProfile.surfaceY - tableSurfaceEdgeDrop * normalized * normalized;
+    };
+    const getTableBallContactY = (worldZ = tableProfile.centerZ): number => getTableSurfaceYAt(worldZ) + ballRadius;
     const BALL_VISUAL_SPIN_MAX = 26.0;
     let ballSpinTwist = 0;
     const ballOscillationWindow = 0.16;
@@ -630,7 +658,7 @@ export async function main(): Promise<void> {
       const tableHalfLength = tableProfile.halfLength + 0.16 * SCALE;
       const tableCenterX = tableProfile.centerX;
       const tableCenterZ = tableProfile.centerZ;
-      const tableContactCenterY = getTableBallContactY();
+      const tableContactCenterY = getTableBallContactY(ball.mesh.position.z);
       const crossTolerance = 0.03 * SCALE;
 
       const isInsideTableXZ = (p: Vector3): boolean => (
@@ -691,7 +719,12 @@ export async function main(): Promise<void> {
         ball.mesh.position.y < tableContactCenterY - 0.06 * SCALE &&
         isInsideTableXZ(ball.mesh.position);
 
-      if (!((crossedPlaneFromAbove && sweptOverTable) || deepInsideFallback)) {
+      const directTableCapture =
+        vel.y < -0.05 * SCALE &&
+        sweptOverTable &&
+        ball.mesh.position.y <= tableContactCenterY + Math.max(ballRadius * 0.85, 0.18 * SCALE);
+
+      if (!((crossedPlaneFromAbove && sweptOverTable) || deepInsideFallback || directTableCapture)) {
         return;
       }
 
@@ -712,6 +745,23 @@ export async function main(): Promise<void> {
       const reboundVy = Math.max(1.35 * SCALE, Math.abs(vel.y) * TABLE_BOUNCE_RESTITUTION);
       ball.mesh.physicsBody.setLinearVelocity(new Vector3(vel.x * 0.985, reboundVy, vel.z * 0.985));
       bounceEventCooldown = Math.max(bounceEventCooldown, 0.18);
+
+      if (DEBUG_POST_RECEPTION_KICK && lastPostReceptionKickDebug) {
+        console.log('[kick-debug] table impact', {
+          impactX: ball.mesh.position.x,
+          impactY: ball.mesh.position.y,
+          impactZ: ball.mesh.position.z,
+          deltaX: ball.mesh.position.x - lastPostReceptionKickDebug.targetX,
+          deltaZ: ball.mesh.position.z - lastPostReceptionKickDebug.targetZ,
+          expectedTarget: {
+            x: lastPostReceptionKickDebug.targetX,
+            y: lastPostReceptionKickDebug.targetY,
+            z: lastPostReceptionKickDebug.targetZ,
+          },
+          launch: lastPostReceptionKickDebug,
+        });
+        lastPostReceptionKickDebug = null;
+      }
     };
 
     const applyNoGroundFallGuard = (): void => {
@@ -877,12 +927,15 @@ export async function main(): Promise<void> {
       lastTouchPlayer = null;
       touchesByPlayer[0] = 0;
       touchesByPlayer[1] = 0;
+      canKickAfterReceptionByPlayer[0] = false;
+      canKickAfterReceptionByPlayer[1] = false;
       rallyPhaseByPlayer[0] = 'defense';
       rallyPhaseByPlayer[1] = 'defense';
       bouncesOnSideSinceLastTouch[0] = 0;
       bouncesOnSideSinceLastTouch[1] = 0;
       tableBouncesOnSideSinceLastTouch[0] = 0;
       tableBouncesOnSideSinceLastTouch[1] = 0;
+      lastTableBounceSideSinceLastTouch = null;
       bounceEventCooldown = 0;
       serveBounceGrace = 0;
       pendingPrepSuperHigh[0] = false;
@@ -899,9 +952,53 @@ export async function main(): Promise<void> {
       });
     };
 
-    const awardPoint = (scoringTeam: number): void => {
-      matchManager.recordPoint(scoringTeam);
+    const startPointResultAnimations = (scoringTeam: number): void => {
+      pointResultAnimationToken += 1;
+      const animationToken = pointResultAnimationToken;
+      pointResultAnimationsActive = 0;
+
+      const trackAnimationEnd = (): void => {
+        if (animationToken !== pointResultAnimationToken) {
+          return;
+        }
+        pointResultAnimationsActive = Math.max(0, pointResultAnimationsActive - 1);
+      };
+
+      const winnerCharacter = scoringTeam === 0 ? player1 : player2;
+      const loserCharacter = scoringTeam === 0 ? player2 : player1;
+
+      if (winnerCharacter.playAnimation('celebration', false, false, trackAnimationEnd)) {
+        pointResultAnimationsActive += 1;
+      }
+      if (loserCharacter.playAnimation('defeat', false, false, trackAnimationEnd)) {
+        pointResultAnimationsActive += 1;
+      }
+    };
+
+    const clearPointResultAnimations = (): void => {
+      pointResultAnimationToken += 1;
+      pointResultAnimationsActive = 0;
+    };
+
+    const finalizePointAward = (
+      scoringTeam: number,
+      previousSets: [number, number],
+      matchWasActive: boolean,
+    ): void => {
+      const setWon = matchManager.sets[0] !== previousSets[0] || matchManager.sets[1] !== previousSets[1];
+      const matchWon = matchWasActive && !matchManager.isMatchActive;
+      const winnerIndex = scoringTeam === 0 ? 0 : 1;
+      const winnerRoot = winnerIndex === 0 ? charRoot1 : charRoot2;
+
       emitPointScored((scoringTeam + 1) as 1 | 2);
+      if (setWon) {
+        if (matchWon) {
+          pointVFXSystem?.triggerMatchWinCelebration(winnerRoot, winnerIndex);
+        } else {
+          pointVFXSystem?.triggerSetWinCelebration(winnerRoot, winnerIndex);
+        }
+      }
+      startPointResultAnimations(scoringTeam);
       clearRallyState();
 
       if (matchManager.isMatchActive) {
@@ -909,17 +1006,22 @@ export async function main(): Promise<void> {
       }
     };
 
+    const awardPoint = (scoringTeam: number): void => {
+      const previousSets: [number, number] = [matchManager.sets[0], matchManager.sets[1]];
+      const matchWasActive = matchManager.isMatchActive;
+      matchManager.recordPoint(scoringTeam);
+      finalizePointAward(scoringTeam, previousSets, matchWasActive);
+    };
+
     const restartServeNoPoint = (): void => {
       if (serveState.active) {
+        const previousSets: [number, number] = [matchManager.sets[0], matchManager.sets[1]];
+        const matchWasActive = matchManager.isMatchActive;
         const doubleFaultOpponent = matchManager.recordFailedServe(serveState.server);
         if (doubleFaultOpponent !== null) {
           // Double fault: point already recorded inside recordFailedServe; just
           // run the post-point side effects (announcement, reset).
-          emitPointScored((doubleFaultOpponent + 1) as 1 | 2);
-          clearRallyState();
-          if (matchManager.isMatchActive) {
-            resetBallForServe(matchManager.currentServer);
-          }
+          finalizePointAward(doubleFaultOpponent, previousSets, matchWasActive);
           return;
         }
       }
@@ -929,6 +1031,7 @@ export async function main(): Promise<void> {
 
     const quickRestartRally = (server: CourtSide = 0): void => {
       // Preserve score/sets but restart a clean serve instantly for fast visual iteration.
+      clearPointResultAnimations();
       matchManager.resetServe(server);
       clearRallyState();
       resetBallForServe(server);
@@ -1134,13 +1237,14 @@ export async function main(): Promise<void> {
 
       const serveBounceHalfWidth = Math.max(0.35 * SCALE, Math.min(0.65 * TABLE_SCALE, tableProfile.halfWidth * 0.78));
       const serveBounceDepth = Math.max(0.28 * SCALE, Math.min(0.58 * TABLE_SCALE, tableProfile.halfLength * 0.35));
+      const serveBounceZ = tableProfile.centerZ + strikeDirection * serveBounceDepth;
       const serveBounceTarget = new Vector3(
         Math.max(
           tableProfile.centerX - serveBounceHalfWidth,
           Math.min(tableProfile.centerX + serveBounceHalfWidth, tableProfile.centerX + servingPlayer.position.x * 0.22),
         ),
-        getTableBallContactY() + ballRadius * 0.96,
-        tableProfile.centerZ + strikeDirection * serveBounceDepth,
+        getTableBallContactY(serveBounceZ) + ballRadius * 0.96,
+        serveBounceZ,
       );
       const tossDelta = contactAnchor.subtract(tossAnchor);
       const tossVelocity = new Vector3(
@@ -1151,13 +1255,18 @@ export async function main(): Promise<void> {
       tossVelocity.y = Math.max(2.2 * SCALE, Math.min(6.8 * SCALE, tossVelocity.y));
 
       if (serveState.phase === 'ready') {
-        // Keep server in neutral pose during ready so R-interrupted serves
-        // cannot carry over stale head/hand transforms into a new toss.
-        servingCharacter?.playAnimation('idle', true);
         serveState.timer += deltaTime;
         ball.mesh.position.copyFrom(tossAnchor);
         ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
         ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
+
+        if (pointResultAnimationsActive > 0) {
+          return;
+        }
+
+        // Keep server in neutral pose during ready so R-interrupted serves
+        // cannot carry over stale head/hand transforms into a new toss.
+        servingCharacter?.playAnimation('idle', true);
         return;
       }
 
@@ -1384,7 +1493,7 @@ export async function main(): Promise<void> {
 
         const serveLaunchVelocity = new Vector3(dir.x * vxz, vy, dir.z * vxz);
         ball.mesh.physicsBody.setLinearVelocity(serveLaunchVelocity);
-        buildReceptionForecastFromLaunch(serveState.server, ball.mesh.position.clone(), serveLaunchVelocity);
+        buildReceptionForecastFromLaunch(serveState.server, ball.mesh.position.clone(), serveLaunchVelocity, serveBounceTarget.z);
         addBallSpinTwist(dir.x * 6.0 + strikeDirection * 2.0);
         registerPlayerTouch(serveState.server);
         serveBounceGrace = 8;
@@ -1430,15 +1539,39 @@ export async function main(): Promise<void> {
       rallyPhaseByPlayer[playerIndex] = 'kick';
 
       lastTouchPlayer = playerIndex;
+      lastTableBounceSideSinceLastTouch = null;
       clearReceptionForecasts();
       bouncesOnSideSinceLastTouch[0] = 0;
       bouncesOnSideSinceLastTouch[1] = 0;
       tableBouncesOnSideSinceLastTouch[0] = 0;
       tableBouncesOnSideSinceLastTouch[1] = 0;
 
-      // Singles teqball: max 3 touches by the same player.
-      if (touchesByPlayer[playerIndex] > 3) {
+      // Two-touch rally rule: reception + kick only.
+      if (touchesByPlayer[playerIndex] > 2) {
         awardPoint(other);
+      }
+    };
+
+    const awardPointForGroundBounce = (bounceSide: CourtSide): void => {
+      if (lastTouchPlayer === null) {
+        if (serveState.active) {
+          const serverOpponent: CourtSide = serveState.server === 0 ? 1 : 0;
+          awardPoint(serverOpponent);
+        }
+        return;
+      }
+
+      const opponent: CourtSide = lastTouchPlayer === 0 ? 1 : 0;
+
+      if (lastTableBounceSideSinceLastTouch === null) {
+        awardPoint(opponent);
+        return;
+      }
+
+      if (lastTableBounceSideSinceLastTouch === lastTouchPlayer) {
+        awardPoint(opponent);
+      } else {
+        awardPoint(lastTouchPlayer);
       }
     };
 
@@ -1459,7 +1592,7 @@ export async function main(): Promise<void> {
     const isTableSurfaceBounce = (ballPos: Vector3): boolean => {
       const tableHalfWidth = tableProfile.halfWidth;
       const tableHalfLength = tableProfile.halfLength;
-      const tableTopY = getTableBallContactY();
+      const tableTopY = getTableBallContactY(ballPos.z);
       const tableTopBand = 0.34 * TABLE_SCALE;
       const withinTableX = Math.abs(ballPos.x - tableProfile.centerX) <= tableHalfWidth + 0.10 * TABLE_SCALE;
       const withinTableZ = Math.abs(ballPos.z - tableProfile.centerZ) <= tableHalfLength + 0.14 * TABLE_SCALE;
@@ -1493,11 +1626,11 @@ export async function main(): Promise<void> {
 
       if (bouncedOnTable) {
         tableBouncesOnSideSinceLastTouch[bounceSide] += 1;
+        lastTableBounceSideSinceLastTouch = bounceSide;
       }
 
-      // Any ground bounce immediately gives the point to the opponent.
       if (!bouncedOnTable) {
-        awardPoint(opponent);
+        awardPointForGroundBounce(bounceSide);
         return;
       }
 
@@ -1583,7 +1716,7 @@ export async function main(): Promise<void> {
       const uprightBounds = root.getHierarchyBoundingVectors(true);
       const uprightSize = uprightBounds.max.subtract(uprightBounds.min);
       const measuredHeight = Math.max(0.001, uprightSize.y);
-      const scale = (1.95 * SCALE) / measuredHeight;
+      const scale = (1.95 * SCALE * PLAYER_SIZE_SCALE) / measuredHeight;
 
       root.scaling = new Vector3(scale, scale, scale);
       root.computeWorldMatrix(true);
@@ -1652,12 +1785,12 @@ export async function main(): Promise<void> {
     // animated hierarchy so that animation root-motion cannot teleport the body
     // and create phantom impulses on the ball.
     const p1Capsule = MeshBuilder.CreateCapsule('p1Capsule',
-      { height: 1.8 * SCALE, radius: 0.3 * SCALE }, gameScene);
+      { height: 1.8 * SCALE * PLAYER_SIZE_SCALE, radius: 0.3 * SCALE * PLAYER_SIZE_SCALE }, gameScene);
     p1Capsule.isVisible = false;
     p1Capsule.isPickable = false;
     p1Capsule.position = new Vector3(
       charRoot1.position.x,
-      0.9 * SCALE,            // half of 1.8 m height
+      0.9 * SCALE * PLAYER_SIZE_SCALE,
       charRoot1.position.z
     );
     new PhysicsAggregate(p1Capsule, PhysicsShapeType.CAPSULE,
@@ -1688,12 +1821,12 @@ export async function main(): Promise<void> {
 
     // Capsule collider for player 2 — same approach: separate mesh, not animated
     const p2Capsule = MeshBuilder.CreateCapsule('p2Capsule',
-      { height: 1.8 * SCALE, radius: 0.3 * SCALE }, gameScene);
+      { height: 1.8 * SCALE * PLAYER_SIZE_SCALE, radius: 0.3 * SCALE * PLAYER_SIZE_SCALE }, gameScene);
     p2Capsule.isVisible = false;
     p2Capsule.isPickable = false;
     p2Capsule.position = new Vector3(
       charRoot2.position.x,
-      0.9 * SCALE,
+      0.9 * SCALE * PLAYER_SIZE_SCALE,
       charRoot2.position.z
     );
     new PhysicsAggregate(p2Capsule, PhysicsShapeType.CAPSULE,
@@ -1845,6 +1978,7 @@ export async function main(): Promise<void> {
 
     // ── UI ────────────────────────────────────────────────────────────────
     uiManager = new UIManager(gameScene);
+    pointVFXSystem = new PointVFXSystem(gameScene, camera);
 
     // InputManager wraps the shared pressedKeys set and provides consume-once helpers.
     inputManager = new InputManager(pressedKeys);
@@ -2079,9 +2213,10 @@ export async function main(): Promise<void> {
     });
 
     // Player-driven gameplay constants
-    const playerMoveSpeed = 3.4 * SCALE;
-    const playerAccel = 14;
-    const playerDecel = 18;
+    const playerMoveSpeed = 5.0 * SCALE;
+    const playerAccel = 16;
+    const playerDecel = 20;
+    const playerJogAnimSpeed = 1.2;
     const playerTurnSpeed = 8.5; // rad/s
     const actionPressCooldown = 220; // ms
     const setupLiftCooldown = 260; // ms
@@ -2094,7 +2229,6 @@ export async function main(): Promise<void> {
     const kneeKickSpeed = 7.1 * SCALE;
     const scissorKickSpeed = 8.2 * SCALE;
     const animConfigBallSpeedScale = 0.01 * SCALE;
-    const actionExtraLift = 1.4 * SCALE;
     const actionAssistDuration = 0.34; // seconds
     const actionAssistImpactTime = 0.20; // remaining-time threshold for impact frame
     const actionAssistRepositionSpeed = 6.8 * SCALE;
@@ -2109,7 +2243,7 @@ export async function main(): Promise<void> {
     const actionScissorStartRange = 2.35 * SCALE;
     const actionKneeHeightMin = 0.95 * SCALE;
     const actionKneeHeightMax = 2.20 * SCALE;
-    const actionScissorHeightMin = 0.80 * SCALE;
+    const actionScissorHeightMin = 0.61 * SCALE;  // Allow foot kicks on higher ball arcs for snappier response
     const actionScissorHeightMax = 2.85 * SCALE;
     const actionKneeDuration = 0.40;
     const actionScissorDuration = 0.48;
@@ -2138,20 +2272,19 @@ export async function main(): Promise<void> {
     const vicinityInterceptionRange = 2.45 * SCALE;
     const vicinityInterceptionAirMinY = 0.06 * SCALE;
     const vicinityInterceptionHeightMax = 2.90 * SCALE;
-    const tableTargetY = getTableBallContactY(); // ball-center height for first contact on table top
     const gravityAbs = 9.81;
     const impactWindowGrace = 0.08;
-    const antiTunnelBodyRadius = 0.42 * SCALE;
-    const antiTunnelBodyBottom = 0.20 * SCALE;
-    const antiTunnelBodyTop = 1.95 * SCALE;
+    const antiTunnelBodyRadius = 0.42 * SCALE * PLAYER_SIZE_SCALE;
+    const antiTunnelBodyBottom = 0.20 * SCALE * PLAYER_SIZE_SCALE;
+    const antiTunnelBodyTop = 1.95 * SCALE * PLAYER_SIZE_SCALE;
     const antiTunnelPushOut = 0.05 * SCALE;
     const antiTunnelMinReboundY = 2.2 * SCALE;
     const ENABLE_PLAYER_ANTI_TUNNEL_GUARD = true;
     const ENABLE_PLAYER_FALLBACK_BODY_VOLUME = true;
     const ballInteractionOwnerHoldSeconds = 0.12;
-    const playerBodyRadius = 0.42 * SCALE;
-    const playerBodyBottom = 0.22 * SCALE;
-    const playerBodyTop = 1.95 * SCALE;
+    const playerBodyRadius = 0.42 * SCALE * PLAYER_SIZE_SCALE;
+    const playerBodyBottom = 0.22 * SCALE * PLAYER_SIZE_SCALE;
+    const playerBodyTop = 1.95 * SCALE * PLAYER_SIZE_SCALE;
     const playerBodyRestitution = 0.42;
     const playerBodyPush = 0.35 * SCALE;
     const playerDribbleSpeed = 3.8 * SCALE;
@@ -2208,6 +2341,7 @@ export async function main(): Promise<void> {
     };
     type AssistState = {
       active: boolean;
+      followPlayer: boolean;
       action: OffensiveAction | null;
       timer: number;
       impactTime: number;
@@ -2217,6 +2351,7 @@ export async function main(): Promise<void> {
     };
     const p1Assist: AssistState = {
       active: false,
+      followPlayer: true,
       action: null,
       timer: 0,
       impactTime: actionAssistImpactTime,
@@ -2226,6 +2361,7 @@ export async function main(): Promise<void> {
     };
     const p2Assist: AssistState = {
       active: false,
+      followPlayer: true,
       action: null,
       timer: 0,
       impactTime: actionAssistImpactTime,
@@ -2240,11 +2376,14 @@ export async function main(): Promise<void> {
     let postKickLockTimer = 0;
     let postKickLockSpeed = 0;
     let postKickLockDir = new Vector3(0, 0, 1);
+    let postKickGuideTimer = 0;
     let lastTouchPlayer: CourtSide | null = null;
     const touchesByPlayer: [number, number] = [0, 0];
+    const canKickAfterReceptionByPlayer: [boolean, boolean] = [false, false];
     const rallyPhaseByPlayer: [TouchPhase, TouchPhase] = ['defense', 'defense'];
     const bouncesOnSideSinceLastTouch: [number, number] = [0, 0];
     const tableBouncesOnSideSinceLastTouch: [number, number] = [0, 0];
+    let lastTableBounceSideSinceLastTouch: CourtSide | null = null;
     let bounceEventCooldown = 0;
     let serveBounceGrace = 0;
 
@@ -2259,6 +2398,29 @@ export async function main(): Promise<void> {
     };
     const receptionForecastByPlayer: [ReceptionForecast | null, ReceptionForecast | null] = [null, null];
     const prepControlTargetByPlayer: [Vector3 | null, Vector3 | null] = [null, null];
+    type KickDebugContext = {
+      playerSide: CourtSide;
+      action: OffensiveAction | null;
+      strikeFamily: 'header' | 'chest' | 'knee' | 'scissor';
+      targetX: number;
+      targetY: number;
+      targetZ: number;
+      strikeX: number;
+      strikeY: number;
+      strikeZ: number;
+      launchX: number;
+      launchY: number;
+      launchZ: number;
+      distToTable: number;
+      timeToTable: number;
+      horizontalSpeed: number;
+      vyBallistic: number;
+      kickFlightDistanceT: number;
+      kickFlightTimeScale: number;
+      requestPower: number;
+      ballLoft: number;
+    };
+    let lastPostReceptionKickDebug: KickDebugContext | null = null;
 
     const GRID_X_BANDS = 5;
     const GRID_Z_BANDS = 3;
@@ -2352,15 +2514,17 @@ export async function main(): Promise<void> {
       attackerSide: CourtSide,
       launchPos: Vector3,
       launchVelocity: Vector3,
+      targetZ: number,
     ): void => {
       if (collisionDrill.enabled || !matchManager.isMatchActive) return;
 
       const receiver: CourtSide = attackerSide === 0 ? 1 : 0;
+      const targetTableContactY = getTableBallContactY(targetZ);
 
-      // Solve launchPos.y + vy*t - 0.5*g*t^2 = tableTargetY (first downward table crossing).
+      // Solve launchPos.y + vy*t - 0.5*g*t^2 = targetTableContactY (first downward table crossing).
       const a = -0.5 * gravityAbs;
       const b = launchVelocity.y;
-      const c = launchPos.y - tableTargetY;
+      const c = launchPos.y - targetTableContactY;
       const disc = b * b - 4 * a * c;
       if (disc < 0) {
         receptionForecastByPlayer[receiver] = null;
@@ -2387,7 +2551,7 @@ export async function main(): Promise<void> {
 
       const impactPos = new Vector3(
         launchPos.x + launchVelocity.x * tImpact,
-        tableTargetY,
+        targetTableContactY,
         launchPos.z + launchVelocity.z * tImpact,
       );
 
@@ -2409,7 +2573,7 @@ export async function main(): Promise<void> {
       const tApex = postBounceVelocity.y / Math.max(1e-4, gravityAbs);
       const apex = new Vector3(
         impactPos.x + postBounceVelocity.x * tApex,
-        tableTargetY + (postBounceVelocity.y * postBounceVelocity.y) / (2 * gravityAbs),
+        targetTableContactY + (postBounceVelocity.y * postBounceVelocity.y) / (2 * gravityAbs),
         impactPos.z + postBounceVelocity.z * tApex,
       );
 
@@ -2544,7 +2708,7 @@ export async function main(): Promise<void> {
 
       const receiverSide: CourtSide = attackerSide === 0 ? 1 : 0;
       const start = ball.mesh.position.clone();
-      const tableHit = new Vector3(tableTarget.x, tableTargetY, tableTarget.z);
+      const tableHit = new Vector3(tableTarget.x, getTableBallContactY(tableTarget.z), tableTarget.z);
 
       const defenderBox = classifyBox(defenderPos, receiverSide);
       const tableXNorm = clamp01((tableHit.x + playerHalfCourtX) / (2 * playerHalfCourtX));
@@ -2627,6 +2791,7 @@ export async function main(): Promise<void> {
           const bounceSide = sideFromZ(activeCurve.end.z);
           bouncesOnSideSinceLastTouch[bounceSide] += 1;
           tableBouncesOnSideSinceLastTouch[bounceSide] += 1;
+          lastTableBounceSideSinceLastTouch = bounceSide;
           bounceEventCooldown = Math.max(bounceEventCooldown, 0.22);
           arcadeRallyFlight.stage = 'toReceive';
         } else {
@@ -2904,6 +3069,10 @@ export async function main(): Promise<void> {
       const cells: TableCell[] = [];
       const rowHalfDepth = tableProfile.halfLength;
       const colHalfWidth = tableProfile.halfWidth;
+      const minX = tableProfile.centerX - colHalfWidth;
+      const maxX = tableProfile.centerX + colHalfWidth;
+      const minZ = tableProfile.centerZ - rowHalfDepth;
+      const maxZ = tableProfile.centerZ + rowHalfDepth;
       const zNear = tableProfile.centerZ + (attackerSide === 0 ? rowHalfDepth * 0.366 : -rowHalfDepth * 0.366);
       const zFar = tableProfile.centerZ + (attackerSide === 0 ? rowHalfDepth * 0.833 : -rowHalfDepth * 0.833);
       const rows = [zNear, zFar];
@@ -2918,9 +3087,9 @@ export async function main(): Promise<void> {
             row: r,
             col: c,
             center: new Vector3(
-              clampi(cols[c], -colHalfWidth, colHalfWidth),
-              tableTargetY,
-              clampi(rows[r], -rowHalfDepth, rowHalfDepth),
+              clampi(cols[c], minX, maxX),
+              getTableBallContactY(rows[r]),
+              clampi(rows[r], minZ, maxZ),
             ),
             score: 0,
           });
@@ -2929,12 +3098,20 @@ export async function main(): Promise<void> {
       return cells;
     };
 
-    const chooseAimCell = (attackerSide: CourtSide, aimX: number, aimZ: number): Vector3 => {
+    const chooseDiagonalOpponentTableCell = (attackerSide: CourtSide, attackerPos: Vector3): Vector3 => {
       const cells = buildTableCells(attackerSide);
-      const colIdx = aimX < -0.3 ? 0 : aimX > 0.3 ? 2 : 1;
-      const rowIdx = aimZ < -0.3 ? 0 : 1;
-      const match = cells.find(c => c.col === colIdx && c.row === rowIdx);
+      const targetCol = attackerPos.x <= tableProfile.centerX ? 2 : 0;
+      const targetRow = 1;
+      const match = cells.find(c => c.col === targetCol && c.row === targetRow);
       return match ? match.center : cells[cells.length - 1].center;
+    };
+
+    const computeKickFlightShape = (baseTimeScale: number, distToTable: number): { distanceT: number; timeScale: number } => {
+      const distanceT = clamp01((distToTable - playerHalfCourtZ * 0.28) / Math.max(1e-3, playerHalfCourtZ * 0.95));
+      return {
+        distanceT,
+        timeScale: clampi(baseTimeScale * (0.78 + 0.52 * distanceT), 0.62, 1.20),
+      };
     };
 
     const chooseBestTableCell = (
@@ -2949,7 +3126,12 @@ export async function main(): Promise<void> {
         const distDef = Vector3.Distance(defenderPos, cell.center);
         const distAtk = Vector3.Distance(attackerPos, cell.center);
         let score = distDef * 1.1 - distAtk * 0.35;
-        if (phase === 'kick') score += 0.9;
+        if (phase === 'kick') {
+          // Kicks should land deep enough on the opponent's table to force a
+          // visible table bounce instead of turning into a direct aerial pass.
+          score += 0.9;
+          score += cell.row === 1 ? 1.15 : -0.20;
+        }
         if (band === 'veryHigh' && cell.row === 1) score += 0.6;
         if (band === 'mid' && cell.row === 0) score += 0.35;
         if (Math.abs(attackerPos.x) > 2.5 * SCALE) {
@@ -3064,7 +3246,7 @@ export async function main(): Promise<void> {
       const plan = planInferredAction(player, playerPos, opponentPos);
       if (plan.effectivePhase === 'defense' || !plan.reachable) return;
       // Allow kick after at least 1 reception touch (no preparation phase)
-      if (plan.effectivePhase === 'kick' && touchesByPlayer[player] < 1) return;
+      if (plan.effectivePhase === 'kick' && (touchesByPlayer[player] < 1 || !canKickAfterReceptionByPlayer[player])) return;
       if (plan.effectivePhase === 'reception') return; // handled by tryGuaranteedReception
 
       const aiDecision = chooseAiActionDecision(plan.effectivePhase, plan.ballBand, plan.action, playerPos, opponentPos);
@@ -3355,6 +3537,30 @@ export async function main(): Promise<void> {
         currentVelocity = physicsBody.getLinearVelocity();
       }
 
+      if (postKickGuideTimer > 0 && lastPostReceptionKickDebug) {
+        postKickGuideTimer = Math.max(0, postKickGuideTimer - deltaTime);
+        const guideTarget = new Vector3(
+          lastPostReceptionKickDebug.targetX,
+          lastPostReceptionKickDebug.targetY,
+          lastPostReceptionKickDebug.targetZ,
+        );
+        const remaining = Math.max(0.10, postKickGuideTimer);
+        const posNow = ball.mesh.position;
+        const velNow = physicsBody.getLinearVelocity();
+        const desiredGuideVelocity = new Vector3(
+          (guideTarget.x - posNow.x) / remaining,
+          (guideTarget.y - posNow.y + 0.5 * gravityAbs * remaining * remaining) / remaining,
+          (guideTarget.z - posNow.z) / remaining,
+        );
+        const guideBlend = 0.42;
+        physicsBody.setLinearVelocity(new Vector3(
+          velNow.x + (desiredGuideVelocity.x - velNow.x) * guideBlend,
+          velNow.y + (desiredGuideVelocity.y - velNow.y) * guideBlend,
+          velNow.z + (desiredGuideVelocity.z - velNow.z) * guideBlend,
+        ));
+        currentVelocity = physicsBody.getLinearVelocity();
+      }
+
       if (!PURE_BALL_PHYSICS && currentVelocity.y > BALL_MAX_UPWARD_SPEED) {
         physicsBody.setLinearVelocity(
           new Vector3(currentVelocity.x, BALL_MAX_UPWARD_SPEED, currentVelocity.z)
@@ -3437,7 +3643,7 @@ export async function main(): Promise<void> {
         } else {
         const desired = new Vector3(
           postKickLockDir.x * postKickLockSpeed,
-          Math.max(v.y, 0.35 * SCALE),
+          v.y,
           postKickLockDir.z * postKickLockSpeed,
         );
         const blend = 0.22;
@@ -3456,7 +3662,7 @@ export async function main(): Promise<void> {
       const bounceVelocityY = physicsBody.getLinearVelocity().y;
       const tableHalfWidthForBounce = tableProfile.halfWidth;
       const tableHalfLengthForBounce = tableProfile.halfLength;
-      const tableTopYForBounce = getTableBallContactY();
+      const tableTopYForBounce = getTableBallContactY(ball.mesh.position.z);
       const nearTableImpactZone =
         Math.abs(ball.mesh.position.x - tableProfile.centerX) <= tableHalfWidthForBounce + 0.18 * TABLE_SCALE &&
         Math.abs(ball.mesh.position.z - tableProfile.centerZ) <= tableHalfLengthForBounce + 0.22 * TABLE_SCALE &&
@@ -3484,6 +3690,7 @@ export async function main(): Promise<void> {
         // The counter is reset by registerPlayerTouch() and clearRallyState().
         if (bouncedOnTableNow && PURE_BALL_PHYSICS) {
           tableBouncesOnSideSinceLastTouch[bounceSide] += 1;
+          lastTableBounceSideSinceLastTouch = bounceSide;
         }
 
         if (
@@ -3517,6 +3724,15 @@ export async function main(): Promise<void> {
           // Opponent of the bouncing side scores
           const sideOpponent: CourtSide = bounceSide === 0 ? 1 : 0;
           awardPoint(sideOpponent);
+        }
+
+        if (
+          PURE_BALL_PHYSICS &&
+          !collisionDrill.enabled &&
+          matchManager.isMatchActive &&
+          !bouncedOnTableNow
+        ) {
+          awardPointForGroundBounce(bounceSide);
         }
       }
 
@@ -3610,78 +3826,15 @@ export async function main(): Promise<void> {
         p2MoveZ = Math.abs(dz) > dead ? Math.sign(dz) : 0;
       }
 
-      const getDefenseAdjustment = (
-        player: CourtSide,
-        playerPos: Vector3,
-        minZ: number,
-        maxZ: number,
-      ): { x: number; z: number } => {
-        if (
-          ENABLE_ARCADE_RALLY_SCRIPT &&
-          arcadeRallyFlight.active &&
-          arcadeRallyFlight.stage === 'toReceive' &&
-          arcadeRallyFlight.receiverSide === player
-        ) {
-          const span = Math.max(0.001, maxZ - minZ);
-          const targetX = clampi(arcadeRallyFlight.receiveTarget.x, -playerHalfCourtX, playerHalfCourtX);
-          const targetZ = clampi(arcadeRallyFlight.receiveTarget.z, minZ, maxZ);
-          const dx = targetX - playerPos.x;
-          const dz = targetZ - playerPos.z;
-          const dead = 0.12 * SCALE;
-          const norm = (v: number, range: number): number => {
-            if (Math.abs(v) <= dead) return 0;
-            return Math.max(-1, Math.min(1, v / Math.max(0.001, range)));
-          };
-          return {
-            x: norm(dx, playerHalfCourtX * 0.88),
-            z: norm(dz, span * 0.44),
-          };
-        }
-
-        const ballSide = sideFromZ(ball.mesh.position.z);
-        if (getPlannedPhase(player, ballSide) !== 'defense') {
-          return { x: 0, z: 0 };
-        }
-
-        const span = Math.max(0.001, maxZ - minZ);
-        const vel = physicsBody.getLinearVelocity();
-        const incoming = player === 0 ? vel.z < -0.08 * SCALE : vel.z > 0.08 * SCALE;
-        const depthRatio = incoming ? 0.33 : 0.18;
-        const targetZ = minZ + span * depthRatio;
-        // When ball is on opponent's side, position diagonally opposite the
-        // ball's lateral (X) position so the player is harder to bypass.
-        const targetX = Math.max(-playerHalfCourtX * 0.72, Math.min(playerHalfCourtX * 0.72, -ball.mesh.position.x * 0.62));
-
-        const dx = targetX - playerPos.x;
-        const dz = targetZ - playerPos.z;
-        const dead = 0.12 * SCALE;
-        const norm = (v: number, range: number): number => {
-          if (Math.abs(v) <= dead) return 0;
-          return Math.max(-1, Math.min(1, v / Math.max(0.001, range)));
-        };
-
-        return {
-          x: norm(dx, playerHalfCourtX * 0.9),
-          z: norm(dz, span * 0.45),
-        };
-      };
+      const p1TouchPhase = getPlannedPhase(0, sideFromZ(ball.mesh.position.z));
+      const p2TouchPhase = getPlannedPhase(1, sideFromZ(ball.mesh.position.z));
+      const p1ReceptionMovementLocked = !ENABLE_P1_AI && !p1Assist.active && p1StrikeState.timer <= 0 && p1TouchPhase === 'reception';
+      const p2ReceptionMovementLocked = !ENABLE_P2_AI && !p2Assist.active && p2StrikeState.timer <= 0 && p2TouchPhase === 'reception';
 
       if (!collisionDrill.enabled) {
         // P1 is human-controlled — no automatic defense repositioning so the
         // player only moves when arrow keys are pressed.
 
-        if (!ENABLE_P2_AI) {
-          // P2 human-controlled: same respect for pure input, no auto-drift.
-          const p2DefenseAdjust = getDefenseAdjustment(1, charRoot2.position, minCourtSplitZ, playerHalfCourtZ);
-          if (Math.abs(p2MoveX) < 0.01) {
-            p2MoveX = p2DefenseAdjust.x;
-          }
-          if (Math.abs(p2MoveZ) < 0.01) {
-            p2MoveZ = p2DefenseAdjust.z;
-          } else {
-            p2MoveZ += p2DefenseAdjust.z * 0.25;
-          }
-        }
       }
 
       const serveMovementLocked =
@@ -3712,6 +3865,15 @@ export async function main(): Promise<void> {
       if (!collisionDrill.enabled && p1StrikeState.timer > 0) {
         p1MoveX = 0;
         p1MoveZ = 0;
+      }
+
+      if (!collisionDrill.enabled && p1ReceptionMovementLocked) {
+        p1MoveX = 0;
+        p1MoveZ = 0;
+      }
+      if (!collisionDrill.enabled && p2ReceptionMovementLocked) {
+        p2MoveX = 0;
+        p2MoveZ = 0;
       }
 
       const now = Date.now();
@@ -3775,16 +3937,23 @@ export async function main(): Promise<void> {
           const assistDeadzone = 0.18;
           const targetAssistX = Math.abs(rawMoveX) < assistDeadzone ? 0 : rawMoveX;
           const targetAssistZ = Math.abs(rawMoveZ) < assistDeadzone ? 0 : rawMoveZ;
-          const assistBlend = manualInput > 0.05 ? 0.14 : 0.22;
-          collisionDrillAssistMoveX += (targetAssistX - collisionDrillAssistMoveX) * assistBlend;
-          collisionDrillAssistMoveZ += (targetAssistZ - collisionDrillAssistMoveZ) * assistBlend;
-          if (Math.abs(collisionDrillAssistMoveX) < 0.035) collisionDrillAssistMoveX = 0;
-          if (Math.abs(collisionDrillAssistMoveZ) < 0.035) collisionDrillAssistMoveZ = 0;
+          if (manualInput > 0.05) {
+            const assistBlend = 0.14;
+            collisionDrillAssistMoveX += (targetAssistX - collisionDrillAssistMoveX) * assistBlend;
+            collisionDrillAssistMoveZ += (targetAssistZ - collisionDrillAssistMoveZ) * assistBlend;
+            if (Math.abs(collisionDrillAssistMoveX) < 0.035) collisionDrillAssistMoveX = 0;
+            if (Math.abs(collisionDrillAssistMoveZ) < 0.035) collisionDrillAssistMoveZ = 0;
+          } else {
+            collisionDrillAssistMoveX = 0;
+            collisionDrillAssistMoveZ = 0;
+          }
 
-          const manualWeight = manualInput > 0.05 ? 0.78 : 0;
-          const assistWeight = manualInput > 0.05 ? 0.36 : 1.0;
-          const mergedMoveX = Math.max(-1, Math.min(1, manualMoveX * manualWeight + collisionDrillAssistMoveX * assistWeight));
-          const mergedMoveZ = Math.max(-1, Math.min(1, manualMoveZ * manualWeight + collisionDrillAssistMoveZ * assistWeight));
+          const mergedMoveX = manualInput > 0.05
+            ? Math.max(-1, Math.min(1, manualMoveX * 0.78 + collisionDrillAssistMoveX * 0.36))
+            : 0;
+          const mergedMoveZ = manualInput > 0.05
+            ? Math.max(-1, Math.min(1, manualMoveZ * 0.78 + collisionDrillAssistMoveZ * 0.36))
+            : 0;
 
           if (strikerSide === 0) {
             p1MoveX = mergedMoveX;
@@ -3816,7 +3985,7 @@ export async function main(): Promise<void> {
         }
       }
 
-      if (serveState.active && serveState.phase === 'ready') {
+      if (serveState.active && serveState.phase === 'ready' && pointResultAnimationsActive === 0) {
         const serveCanStart = serveState.timer >= SERVE_READY_PAUSE_SECONDS;
         const p1ServeTrigger = serveCanStart && serveState.server === 0 && (ENABLE_P1_AI || inputManager.isServeDown(0));
         const p2ServeTrigger = serveCanStart && serveState.server === 1 && (ENABLE_P2_AI || inputManager.isServeDown(1));
@@ -3875,7 +4044,7 @@ export async function main(): Promise<void> {
           return;
         }
         // Allow kick after at least 1 reception touch (no preparation phase)
-        if (plan.effectivePhase === 'kick' && touchesByPlayer[player] < 1) {
+        if (plan.effectivePhase === 'kick' && (touchesByPlayer[player] < 1 || !canKickAfterReceptionByPlayer[player])) {
           return;
         }
 
@@ -3969,6 +4138,7 @@ export async function main(): Promise<void> {
         if (!character.performAirAction(action, mirrorHint, false, syncedSpeedRatio)) return;
 
         assist.active = true;
+        assist.followPlayer = true;
         assist.action = action;
         assist.timer = strikeTiming.strikeDuration;
         assist.impactTime = strikeTiming.impactTime;
@@ -4042,8 +4212,8 @@ export async function main(): Promise<void> {
         for (const action of receptionActionCandidates) {
           const profile = getActionAssistProfile(action);
           if (
-            ball.mesh.position.y < profile.minHeight - 0.22 * SCALE ||
-            ball.mesh.position.y > profile.maxHeight + 0.22 * SCALE
+            ball.mesh.position.y < profile.minHeight - 0.22 * SCALE * BALL_SIZE_SCALE ||
+            ball.mesh.position.y > profile.maxHeight + 0.22 * SCALE * BALL_SIZE_SCALE
           ) {
             continue;
           }
@@ -4115,7 +4285,7 @@ export async function main(): Promise<void> {
         let syncedSpeedRatio = actionAnimationSpeedRatio;
         const ballVelNow = physicsBody.getLinearVelocity().clone();
         if (rcvAnimConfig && rcvAnimConfig.contactFrame > 0) {
-          const contactH = root.position.y + (rcvProfile.fallbackY ?? 0.9 * SCALE);
+          const contactH = root.position.y + (rcvProfile.fallbackY ?? 0.9 * SCALE * PLAYER_SIZE_SCALE);
           const arrivalPrediction = BallPredictor.ballAtArrival(
             ball.mesh.position.clone(), ballVelNow, contactH, gravityAbs,
           );
@@ -4167,12 +4337,18 @@ export async function main(): Promise<void> {
         strikeState.timer = rcvStrikeDuration;
 
         assist.active = true;
+        assist.followPlayer = true;
         assist.action = action;
         assist.timer = rcvStrikeDuration;
         assist.impactTime = rcvImpactTime;
         assist.hitApplied = false;
         assist.targetX = root.position.x;
         assist.targetZ = root.position.z;
+
+        // Human-controlled reception should stay in place; only the ball contact
+        // assist remains active so the strike still fires on time.
+        const shouldFollowPlayer = playerSide === 0 ? ENABLE_P1_AI : ENABLE_P2_AI;
+        assist.followPlayer = shouldFollowPlayer;
 
         // Face the table
         const targetFacing = getCourtCenterFacing(root.position);
@@ -4251,6 +4427,7 @@ export async function main(): Promise<void> {
           if (p1KickPressed && !p1KickButtonHeld) {
             // Only kick after reception (kick phase), not before
             if (p1Phase === 'kick' &&
+                canKickAfterReceptionByPlayer[0] &&
                 !p1Assist.active &&
                 now - lastP1ActionPress > actionPressCooldown) {
 
@@ -4303,7 +4480,7 @@ export async function main(): Promise<void> {
       }
 
       const p2KickPressed = inputManager.isKickDown(1);
-      if (!collisionDrill.enabled && !ENABLE_P2_AI && !serveSetupActive && p2KickPressed && !p2KickButtonHeld && now - lastP2ActionPress > actionPressCooldown) {
+      if (!collisionDrill.enabled && !ENABLE_P2_AI && !serveSetupActive && p2KickPressed && !p2KickButtonHeld && now - lastP2ActionPress > actionPressCooldown && canKickAfterReceptionByPlayer[1]) {
         const phase = getPlannedPhase(1, sideFromZ(ball.mesh.position.z));
         const isDoubleTap = now - lastP2KickButtonPress <= DOUBLE_TAP_WINDOW_MS;
         if (isDoubleTap && phase === 'kick') pendingKickPowerBoost[1] = true;
@@ -4360,61 +4537,67 @@ export async function main(): Promise<void> {
         maxZ: number,
       ): void => {
         if (assist.active) {
-          const prevX = root.position.x;
-          const prevZ = root.position.z;
           assist.timer = Math.max(0, assist.timer - deltaTime);
           const activeAssistAction = assist.action;
 
-          // Recompute assisted strike target every frame so player follows the
-          // falling ball trajectory instead of aiming at a stale position.
-          if (activeAssistAction) {
-            const profile = getActionAssistProfile(activeAssistAction);
-            const toBallNow = ball.mesh.position.subtract(root.position);
-            const flatToBallNow = new Vector3(toBallNow.x, 0, toBallNow.z);
-            if (flatToBallNow.length() > 0.05) {
-              const towardBallNow = flatToBallNow.normalize();
-              const rightNow = new Vector3(towardBallNow.z, 0, -towardBallNow.x);
-              const playerRightNow = new Vector3(Math.cos(motion.facing), 0, -Math.sin(motion.facing));
-              const sideDotNow = Vector3.Dot(towardBallNow, playerRightNow);
-              const sideSignNow = sideDotNow >= 0 ? 1 : -1;
-              const depthNow = profile.depth;
-              const lateralNow = sideSignNow * profile.lateral;
-              const dynamicTarget = ball.mesh.position
-                .subtract(towardBallNow.scale(depthNow))
-                .add(rightNow.scale(lateralNow));
-              assist.targetX = Math.max(-playerHalfCourtX, Math.min(playerHalfCourtX, dynamicTarget.x));
-              assist.targetZ = Math.max(minZ, Math.min(maxZ, dynamicTarget.z));
+          if (assist.followPlayer) {
+            const prevX = root.position.x;
+            const prevZ = root.position.z;
+
+            // Recompute assisted strike target every frame so player follows the
+            // falling ball trajectory instead of aiming at a stale position.
+            if (activeAssistAction) {
+              const profile = getActionAssistProfile(activeAssistAction);
+              const toBallNow = ball.mesh.position.subtract(root.position);
+              const flatToBallNow = new Vector3(toBallNow.x, 0, toBallNow.z);
+              if (flatToBallNow.length() > 0.05) {
+                const towardBallNow = flatToBallNow.normalize();
+                const rightNow = new Vector3(towardBallNow.z, 0, -towardBallNow.x);
+                const playerRightNow = new Vector3(Math.cos(motion.facing), 0, -Math.sin(motion.facing));
+                const sideDotNow = Vector3.Dot(towardBallNow, playerRightNow);
+                const sideSignNow = sideDotNow >= 0 ? 1 : -1;
+                const depthNow = profile.depth;
+                const lateralNow = sideSignNow * profile.lateral;
+                const dynamicTarget = ball.mesh.position
+                  .subtract(towardBallNow.scale(depthNow))
+                  .add(rightNow.scale(lateralNow));
+                assist.targetX = Math.max(-playerHalfCourtX, Math.min(playerHalfCourtX, dynamicTarget.x));
+                assist.targetZ = Math.max(minZ, Math.min(maxZ, dynamicTarget.z));
+              }
             }
-          }
 
-          const dx = assist.targetX - root.position.x;
-          const dz = assist.targetZ - root.position.z;
-          const dist = Math.sqrt(dx * dx + dz * dz);
-          if (dist > 1e-4) {
-            const step = Math.min(dist, actionAssistRepositionSpeed * deltaTime);
-            root.position.x += (dx / dist) * step;
-            root.position.z += (dz / dist) * step;
-          }
+            const dx = assist.targetX - root.position.x;
+            const dz = assist.targetZ - root.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+            if (dist > 1e-4) {
+              const step = Math.min(dist, actionAssistRepositionSpeed * deltaTime);
+              root.position.x += (dx / dist) * step;
+              root.position.z += (dz / dist) * step;
+            }
 
-          root.position.x = Math.max(-playerHalfCourtX, Math.min(playerHalfCourtX, root.position.x));
-          root.position.z = Math.max(minZ, Math.min(maxZ, root.position.z));
+            root.position.x = Math.max(-playerHalfCourtX, Math.min(playerHalfCourtX, root.position.x));
+            root.position.z = Math.max(minZ, Math.min(maxZ, root.position.z));
 
-          motion.vx = (root.position.x - prevX) / Math.max(1e-4, deltaTime);
-          motion.vz = (root.position.z - prevZ) / Math.max(1e-4, deltaTime);
+            motion.vx = (root.position.x - prevX) / Math.max(1e-4, deltaTime);
+            motion.vz = (root.position.z - prevZ) / Math.max(1e-4, deltaTime);
 
-          // Always face the table center during assists.
-          const targetFacing = getCourtCenterFacing(root.position);
-          const delta = Math.atan2(
-            Math.sin(targetFacing - motion.facing),
-            Math.cos(targetFacing - motion.facing),
-          );
-          const step = Math.max(-playerTurnSpeed * deltaTime, Math.min(playerTurnSpeed * deltaTime, delta));
-          motion.facing += step;
-          root.rotation.y = motion.facing + PLAYER_MODEL_YAW_OFFSET + (character?.getMirrorFacingCompensationYaw() ?? 0) + (character?.getAnimationFacingCompensationYaw() ?? 0);
+            // Always face the table center during assists.
+            const targetFacing = getCourtCenterFacing(root.position);
+            const delta = Math.atan2(
+              Math.sin(targetFacing - motion.facing),
+              Math.cos(targetFacing - motion.facing),
+            );
+            const step = Math.max(-playerTurnSpeed * deltaTime, Math.min(playerTurnSpeed * deltaTime, delta));
+            motion.facing += step;
+            root.rotation.y = motion.facing + PLAYER_MODEL_YAW_OFFSET + (character?.getMirrorFacingCompensationYaw() ?? 0) + (character?.getAnimationFacingCompensationYaw() ?? 0);
 
-          if (capsule) {
-            capsule.position.x = root.position.x;
-            capsule.position.z = root.position.z;
+            if (capsule) {
+              capsule.position.x = root.position.x;
+              capsule.position.z = root.position.z;
+            }
+          } else {
+            motion.vx = 0;
+            motion.vz = 0;
           }
 
           if (assist.timer <= 0) {
@@ -4511,7 +4694,7 @@ export async function main(): Promise<void> {
         if (capsule) {
           capsule.position.x = root.position.x;
           capsule.position.z = root.position.z;
-          capsule.position.y = root.position.y + 0.98 * SCALE;
+          capsule.position.y = root.position.y + 0.98 * SCALE * PLAYER_SIZE_SCALE;
         }
       };
 
@@ -4609,16 +4792,21 @@ export async function main(): Promise<void> {
 
         if ((!rangeOk && !rangeOkAtContact) || !heightOk) return;
         if (isKickAction(request.action) && plannedPhase !== 'kick') return;
+        if (isKickAction(request.action) && !canKickAfterReceptionByPlayer[playerSide]) {
+          request.action = null;
+          request.ttl = 0;
+          requestPowerByPlayer[playerSide] = 1;
+          return;
+        }
 
-        // After a reception pop-up the ball can be well above the kick-height window
-        // when it first starts descending.  Only apply the timing gate in that case
-        // (height > profile.maxHeight) so normal incoming kicks are never delayed.
-        // Require rawRatio >= 0.90 so the animation starts at most ~11 % slower than
-        // natural speed, meaning the ball is ≤ ~0.5 m above the contact bone when the
-        // player begins their swing — visually the kick starts just as the ball enters
-        // striking range.
-        if (isKickAction(request.action) && height > profile.maxHeight &&
-            animConfig && animConfig.contactFrame > 0) {
+        // Timing gate: ensure the animation contact frame will actually coincide with
+        // the ball reaching the strike bone.  The synced speed ratio is clamped at
+        // [0.75, 4.0] in triggerAction; below 0.75 the animation can't slow down
+        // enough and the impact window would open before the ball arrives.
+        // Apply this gate to ALL kick actions regardless of height window, so that
+        // header kicks (maxHeight = +Inf) are also deferred while the ball is still
+        // descending from a reception pop-up.
+        if (isKickAction(request.action) && animConfig && animConfig.contactFrame > 0) {
           const contactH = root.position.y + (profile.fallbackY ?? 1.0);
           const arrivalPred = BallPredictor.ballAtArrival(
             ball.mesh.position.clone(), vel.clone(), contactH, gravityAbs,
@@ -4626,7 +4814,7 @@ export async function main(): Promise<void> {
           if (arrivalPred.timeSeconds > 0.05) {
             const naturalDuration = animConfig.contactFrame / ANIM_CONFIG_FPS;
             const rawRatio = naturalDuration / arrivalPred.timeSeconds;
-            if (rawRatio < 0.90) return; // Ball still too high — wait for it to descend further
+            if (rawRatio < 0.75) return; // Ball still above contact zone — wait for it to descend
           }
         }
 
@@ -4689,9 +4877,12 @@ export async function main(): Promise<void> {
 
       const preventBallTunnelingThroughPlayer = (playerPos: Vector3, assist: AssistState): boolean => {
         if (!ENABLE_PLAYER_ANTI_TUNNEL_GUARD) return false;
-        // In pure mode keep anti-tunnel active even during assisted actions so
-        // fast balls cannot phase through the player body.
-        if (assist.active && ENABLE_BALL_MOTION_ASSIST) return false;
+        // Disable anti-tunnel guard whenever a kick/reception assist is active.
+        // The assist impact window snaps the ball to the strike bone, so we must
+        // NOT deflect the ball on its way down to contact height.  The body-
+        // collision system (enforcePlayerBodyCollision) still protects against
+        // real tunneling in pure-physics mode.
+        if (assist.active) return false;
         const vel = physicsBody.getLinearVelocity();
         if (vel.y >= -0.05) return false;
 
@@ -4950,8 +5141,10 @@ export async function main(): Promise<void> {
             // the visual hit always coincides with the animated contact pose.
             // Outside the impact window, only nudge toward the bone for early capture.
             if (!ENABLE_BALL_MOTION_ASSIST) {
-              if (inImpactWindow && rootDistance <= 2.2 * SCALE) {
+              if (inImpactWindow && rootDistance <= 3.0 * SCALE) {
                 // Hard snap to bone — this is the visible contact point.
+                // 3.0 × SCALE gives comfortable margin even when the ball
+                // drifted slightly sideways during the wind-up animation.
                 ball.mesh.position.copyFrom(strikePos);
                 ball.mesh.position.y = Math.max(ball.mesh.position.y, ballRadius);
               } else if (!inImpactWindow && effectiveContactDistance > profile.contactDistance && canEarlyCapture) {
@@ -5027,6 +5220,7 @@ export async function main(): Promise<void> {
                 assist.action = null;
                 strikeState.action = null;
                 strikeState.timer = 0;
+                character.clearStrikeBoneContactSnapshot();
                 return influenced;
               }
               // Teleport the ball to just above the player's head before applying
@@ -5036,15 +5230,15 @@ export async function main(): Promise<void> {
               //     lateral push from sliding off the mesh).
               //  2. Locks XZ to the player root so the ball goes straight up from
               //     the player's standing position regardless of where the bone was.
-              const characterHeight = 1.80 * SCALE;
+              const characterHeight = 1.80 * SCALE * PLAYER_SIZE_SCALE;
               // Place ball slightly in front of the player (toward the net) so it
               // rises ahead of them rather than at/behind their root position.
               const receptionForwardOffset = 0.30 * SCALE;
               ball.mesh.position.x = playerPos.x;
               ball.mesh.position.z = playerPos.z + receptionForwardOffset * forwardSign;
               ball.mesh.position.y = playerPos.y + characterHeight + ballRadius;
-              // Apex = 2× the player's height above the player's feet.
-              const apexTarget = playerPos.y + 2.0 * characterHeight;
+              // Apex = 1.75× the player's height above the player's feet.
+              const apexTarget = playerPos.y + 1.75 * characterHeight;
               const arcHeight = Math.max(0.1 * SCALE, apexTarget - ball.mesh.position.y);
               const recvVy = Math.sqrt(2.0 * gravityAbs * arcHeight);
               physicsBody.setLinearVelocity(new Vector3(0, recvVy, 0));
@@ -5054,7 +5248,9 @@ export async function main(): Promise<void> {
               assist.action = null;
               strikeState.action = null;
               strikeState.timer = 0;
+              character.clearStrikeBoneContactSnapshot();
               registerPlayerTouch(playerSide);
+              canKickAfterReceptionByPlayer[playerSide] = true;
               return true;
             }
 
@@ -5138,6 +5334,7 @@ export async function main(): Promise<void> {
               assist.action = null;
               strikeState.action = null;
               strikeState.timer = 0;
+              character.clearStrikeBoneContactSnapshot();
               // Clear prepared control target after it was applied
               prepControlTargetByPlayer[attackerSide] = null;
               registerPlayerTouch(attackerSide);
@@ -5166,8 +5363,8 @@ export async function main(): Promise<void> {
                     ),
                   ),
                 )
-              : (attackerSide === 0 && !ENABLE_P1_AI && touchPhase === 'kick')
-                ? chooseAimCell(attackerSide, p1KickAim.x, p1KickAim.z)
+              : touchPhase === 'kick'
+                ? chooseDiagonalOpponentTableCell(attackerSide, playerPos)
                 : chooseBestTableCell(
                   attackerSide,
                   playerPos,
@@ -5175,6 +5372,37 @@ export async function main(): Promise<void> {
                   touchPhase,
                   band,
                 );
+
+            // Mirror the serve flow: anchor the kick from the strike bone, then
+            // solve a deterministic ballistic path to the chosen table cell.
+            // Foot kicks need more lift to clear the net from a low strike point.
+            const kickContactLift = strikeFamily === 'header'
+              ? 0.05 * SCALE
+              : strikeFamily === 'chest'
+                ? 0.06 * SCALE
+                : strikeFamily === 'knee'
+                  ? 0.08 * SCALE
+                  : 0.11 * SCALE;
+            const kickContactAnchor = strikePos.add(new Vector3(0, kickContactLift, 0));
+            ball.mesh.position.copyFrom(kickContactAnchor);
+
+            // Nudge the ball out of the rig before solving the launch so Havok
+            // does not keep it pressed against the player mesh on contact.
+            const kickReleaseVector = new Vector3(
+              tableTarget.x - kickContactAnchor.x,
+              0,
+              tableTarget.z - kickContactAnchor.z,
+            );
+            const kickReleaseDir = kickReleaseVector.lengthSquared() > 1e-5
+              ? kickReleaseVector.normalize()
+              : new Vector3(0, 0, forwardSign);
+            const kickReleaseDistance = Math.max(0.24 * SCALE, profile.contactDistance * 0.45);
+            const kickReleaseLift = Math.max(0.05 * SCALE, ballRadius * 0.45 + kickContactLift * 0.35);
+            ball.mesh.position.addInPlace(new Vector3(
+              kickReleaseDir.x * kickReleaseDistance,
+              kickReleaseLift,
+              kickReleaseDir.z * kickReleaseDistance,
+            ));
 
             const flatToTable = new Vector3(
               tableTarget.x - ball.mesh.position.x,
@@ -5186,26 +5414,36 @@ export async function main(): Promise<void> {
               ? flatToTable.normalize()
               : new Vector3(0, 0, forwardSign);
 
-            const timeToTable = Math.max(0.30, Math.min(0.70, (distToTable / Math.max(0.01, strikeSpeed * 0.82)) * strikeProfile.flightTimeScale));
+            const kickFamilyBaseTimeScale = strikeFamily === 'header'
+              ? 0.92
+              : strikeFamily === 'chest'
+                ? 0.88
+                : strikeFamily === 'knee'
+                  ? 0.84
+                  : 0.80;
+            const kickFlight = computeKickFlightShape(kickFamilyBaseTimeScale, distToTable);
+            const effectiveTargetY = tableTarget.y;
+
+            const timeToTable = Math.max(
+              0.26,
+              Math.min(
+                1.10,
+                (distToTable / Math.max(0.01, strikeSpeed * 0.82)) * strikeProfile.flightTimeScale * kickFlight.timeScale,
+              ),
+            );
             const horizontalSpeedBase = distToTable / Math.max(0.12, timeToTable);
             const horizontalSpeed = collisionDrill.enabled
               ? Math.min(4.2 * SCALE, horizontalSpeedBase)
               : horizontalSpeedBase;
-            const dy = tableTarget.y - ball.mesh.position.y;
+            const dy = effectiveTargetY - ball.mesh.position.y;
             const vyBallistic = (dy + 0.5 * gravityAbs * timeToTable * timeToTable) / timeToTable;
-            let vy = vyBallistic + actionExtraLift * 0.18 + strikeProfile.verticalVelocityBias;
-            if (animConfig) {
-              const loft = Math.max(0, Math.min(1, animConfig.ballLoft));
-              vy += (loft - 0.25) * 1.8 * SCALE;
-            }
-            if (prepSuperHighActive) {
-              vy += 1.15 * SCALE;
-            }
-            if (kickBoostActive) {
-              vy += 0.34 * SCALE;
-            }
+            let vy = vyBallistic;
             if (collisionDrill.enabled) {
-              vy += 0.72 * SCALE;
+              vy += 0.06 * SCALE;
+            }
+            // Foot kicks need lift to clear the net while keeping high horizontal speed.
+            if (strikeFamily === 'scissor') {
+              vy += 1.2 * SCALE;
             }
             vy = Math.max(0.85 * SCALE, Math.min(8.4 * SCALE, vy));
 
@@ -5215,6 +5453,33 @@ export async function main(): Promise<void> {
               flatDir.z * horizontalSpeed,
             );
             physicsBody.setLinearVelocity(launchVelocity);
+
+            if (DEBUG_POST_RECEPTION_KICK) {
+              lastPostReceptionKickDebug = {
+                playerSide: attackerSide,
+                action: strikeState.action,
+                strikeFamily,
+                targetX: tableTarget.x,
+                targetY: tableTarget.y,
+                targetZ: tableTarget.z,
+                strikeX: kickContactAnchor.x,
+                strikeY: kickContactAnchor.y,
+                strikeZ: kickContactAnchor.z,
+                launchX: launchVelocity.x,
+                launchY: launchVelocity.y,
+                launchZ: launchVelocity.z,
+                distToTable,
+                timeToTable,
+                horizontalSpeed,
+                vyBallistic,
+                kickFlightDistanceT: kickFlight.distanceT,
+                kickFlightTimeScale: kickFlight.timeScale,
+                requestPower: requestPowerByPlayer[playerSide],
+                ballLoft: animConfig ? Math.max(0, Math.min(1, animConfig.ballLoft)) : 0.5,
+              };
+              postKickGuideTimer = Math.max(0.10, timeToTable + 0.08);
+              console.log('[kick-debug] post-reception launch', lastPostReceptionKickDebug);
+            }
 
             // Realistic topspin: angular velocity ≈ v/r around axes perpendicular
             // to the kick direction so the ball visually rolls through the air.
@@ -5231,7 +5496,7 @@ export async function main(): Promise<void> {
             }
 
             if (!collisionDrill.enabled) {
-              buildReceptionForecastFromLaunch(attackerSide, ball.mesh.position.clone(), launchVelocity);
+              buildReceptionForecastFromLaunch(attackerSide, ball.mesh.position.clone(), launchVelocity, tableTarget.z);
             }
             addBallSpinTwist(flatDir.x * 7.5 + (strikeFamily === 'scissor' ? 3.5 : 1.8));
 
@@ -5249,7 +5514,9 @@ export async function main(): Promise<void> {
             assist.action = null;
             strikeState.action = null;
             strikeState.timer = 0;
+            character.clearStrikeBoneContactSnapshot();
             registerPlayerTouch(playerSide);
+            canKickAfterReceptionByPlayer[playerSide] = false;
             if (ENABLE_ARCADE_RALLY_SCRIPT && !collisionDrill.enabled) {
               startArcadeRallyFlight(
                 attackerSide,
@@ -5259,6 +5526,7 @@ export async function main(): Promise<void> {
                 playerPos,
                 defenderPos,
               );
+              postKickGuideTimer = 0;
             }
             return true;
           }
@@ -5438,7 +5706,7 @@ export async function main(): Promise<void> {
           ? Math.max(1.0, Math.min(1.35, 1.35 - p1DistToBall * 0.09))
           : 1.0;
         const p1SpeedRatio =
-          (Math.sqrt(p1Motion.vx ** 2 + p1Motion.vz ** 2) / Math.max(0.001, playerMoveSpeed)) * p1QuickBoost;
+          (Math.sqrt(p1Motion.vx ** 2 + p1Motion.vz ** 2) / Math.max(0.001, playerMoveSpeed)) * p1QuickBoost * playerJogAnimSpeed;
         player1.setMovement(local1.localX, -local1.localZ, false, deltaTime, p1SpeedRatio);
       }
       if (player2 && !p2ServeAnimLocked) {
@@ -5448,7 +5716,7 @@ export async function main(): Promise<void> {
           ? Math.max(1.0, Math.min(1.35, 1.35 - p2DistToBall * 0.09))
           : 1.0;
         const p2SpeedRatio =
-          (Math.sqrt(p2Motion.vx ** 2 + p2Motion.vz ** 2) / Math.max(0.001, playerMoveSpeed)) * p2QuickBoost;
+          (Math.sqrt(p2Motion.vx ** 2 + p2Motion.vz ** 2) / Math.max(0.001, playerMoveSpeed)) * p2QuickBoost * playerJogAnimSpeed;
         player2.setMovement(local2.localX, -local2.localZ, false, deltaTime, p2SpeedRatio);
       }
 
@@ -5459,6 +5727,8 @@ export async function main(): Promise<void> {
         serveState.serveType,
         serveState.active && serveState.phase === 'ready',
       );
+
+      pointVFXSystem?.update(deltaTime);
 
       // UI updates are driven by EventBus and BabylonJS animations via UIManager.
 
@@ -5485,6 +5755,7 @@ export async function main(): Promise<void> {
     });
 
     EventBus.on('match:restart', () => {
+      clearPointResultAnimations();
       matchManager.restartMatch();
       resetBallForServe(0);
     });

@@ -1,10 +1,10 @@
 {
   "match": {
     "maxTouchesPerPlayer": 3,
-    "pointsPerSet": 20,
+    "pointsPerSet": 12,
     "setsToWin": 2,
     "minPointLeadToWinSet": 2,
-    "serviceChangeEveryNPoints": 4
+    "serviceChangeEveryNPoints": 2
   },
   "faults": {
     "netTouchFault": "opponent scores",
@@ -15,7 +15,7 @@
     "doubleFaultOnService": "opponent scores"
   },
   "serve": {
-    "serveRotation": "every 4 points",
+    "serveRotation": "every 2 points",
     "firstServeTeam": "coin flip",
     "maxFailedAttempts": 2
   }

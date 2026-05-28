@@ -109,7 +109,7 @@ export class KickSystem {
 
     this._animStarted = false;
     if (this._animStartDelay <= 0.001) {
-      this._player.playAnimation(selection.clipKey, false, selection.mirrorX, this._speedRatio);
+      this._player.playAnimation(selection.clipKey, false, selection.mirrorX);
       this._animStarted = true;
     }
   }
@@ -121,7 +121,7 @@ export class KickSystem {
     this._timer += deltaTime;
 
     if (!this._animStarted && this._selection && this._timer >= this._animStartDelay) {
-      this._player.playAnimation(this._selection.clipKey, false, this._selection.mirrorX, this._speedRatio);
+      this._player.playAnimation(this._selection.clipKey, false, this._selection.mirrorX);
       this._animStarted = true;
     }
 
@@ -141,7 +141,7 @@ export class KickSystem {
           // Pass the ball's pre-snap position as the reference so foot/knee
           // bone resolution picks whichever side is actually reaching for the ball.
           const ballNow = this._ball.mesh.position;
-          const strikeBonePos = this._player.getStrikeBonePosition(ballNow);
+          const strikeBonePos = this._player.getStrikeBonePosition();
           // If bone not found, fall back to a sensible height above the root.
           bonePos = strikeBonePos.equals(this._player.mesh.position)
             ? this._player.mesh.position.clone().add(new Vector3(0, 1.0, 0))

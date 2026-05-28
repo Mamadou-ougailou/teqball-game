@@ -40,7 +40,11 @@ export const WORLD_BOUNCE_RESTITUTION = 0.82;
 export const TABLE_BOUNCE_RESTITUTION = 0.84;
 export const BALL_BOUNCE_RESTITUTION = 0.84;
 export const GLOBAL_KICK_VELOCITY_MULTIPLIER = 1.20;
-export const ENABLE_NO_GROUND_FALL_GUARD = true;
+// Disabled: the guard force-rebounded the ball before it could physically touch
+// the floor, which made the rules system unable to authoritatively detect a
+// ground bounce.  Without it, Havok handles the floor collision naturally and
+// the bounce-detection block can award the point.
+export const ENABLE_NO_GROUND_FALL_GUARD = false;
 export const NO_GROUND_FALL_TRIGGER_HEIGHT = 0.07 * SCALE;
 export const NO_GROUND_FALL_REBOUND_MIN_SPEED = 2.2 * SCALE;
 export const NO_GROUND_FALL_RESTITUTION = 0.82;

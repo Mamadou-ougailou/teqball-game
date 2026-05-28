@@ -43,9 +43,6 @@ export class PlayerInput {
     if (this._pressedKeys.has('control') || this._pressedKeys.has('controlleft') || this._pressedKeys.has('controlright')) {
       return 'Maximum';
     }
-    if (this._pressedKeys.has('shift') || this._pressedKeys.has('shiftleft') || this._pressedKeys.has('shiftright')) {
-      return 'Fast';
-    }
     return 'Normal';
   }
 

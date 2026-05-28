@@ -61,6 +61,9 @@ export class PointVFXSystem implements IEntity {
   /** Soft-circle particle texture (created once, reused for all bursts) */
   private readonly _pTex: DynamicTexture;
 
+  /** Flat square particle texture for confetti-style bursts. */
+  private readonly _confettiTex: DynamicTexture;
+
   /** Full-screen flash overlay */
   private readonly _flashRect: Rectangle;
   private _flashAnim: ReturnType<Scene['beginDirectAnimation']> | null = null;
@@ -96,6 +99,14 @@ export class PointVFXSystem implements IEntity {
     ctx.fillRect(0, 0, 32, 32);
     dt.update();
     this._pTex = dt;
+
+    const confettiTex = new DynamicTexture('pointVFX_confettiTex', { width: 24, height: 24 }, scene, false);
+    const confettiCtx = confettiTex.getContext() as CanvasRenderingContext2D;
+    confettiCtx.clearRect(0, 0, 24, 24);
+    confettiCtx.fillStyle = 'rgba(255,255,255,1)';
+    confettiCtx.fillRect(4, 4, 16, 16);
+    confettiTex.update();
+    this._confettiTex = confettiTex;
 
     // ── Flash overlay ───────────────────────────────────────────────────────
     const rect = new Rectangle('pointVFX_flash');
@@ -149,6 +160,16 @@ export class PointVFXSystem implements IEntity {
 
     // 5. Winner glow
     this._highlight(winnerRoot, pal.glow, 2.4);
+  }
+
+  /** Celebration for a set win. Fireworks and confetti stay on the winner's side. */
+  triggerSetWinCelebration(winnerRoot: AbstractMesh, teamIndex: 0 | 1): void {
+    this._triggerWinnerCelebration(winnerRoot, teamIndex, false);
+  }
+
+  /** Bigger celebration for the final match win. */
+  triggerMatchWinCelebration(winnerRoot: AbstractMesh, teamIndex: 0 | 1): void {
+    this._triggerWinnerCelebration(winnerRoot, teamIndex, true);
   }
 
   // ── IEntity ───────────────────────────────────────────────────────────────
@@ -343,6 +364,7 @@ export class PointVFXSystem implements IEntity {
     this._clearHighlight();
     this._flashRect.dispose();
     this._pTex.dispose();
+    this._confettiTex.dispose();
     this._hl.dispose();
     this._adt.dispose();
   }
@@ -414,6 +436,106 @@ export class PointVFXSystem implements IEntity {
     ps.disposeOnStop      = true;
 
     ps.start();
+  }
+
+  /** Confetti shower — flat particles that drift and fall around the winner's side. */
+  private _confettiBurst(position: Vector3, color1: Color4, color2: Color4, count: number, matchWin: boolean): void {
+    const ps = new ParticleSystem(`pointVFX_confetti_${Date.now()}`, count, this._scene);
+    ps.particleTexture = this._confettiTex;
+    ps.emitter = position.clone();
+
+    ps.color1 = color1;
+    ps.color2 = color2;
+    ps.colorDead = new Color4(color1.r * 0.35, color1.g * 0.35, color1.b * 0.35, 0);
+
+    ps.minSize = 0.05;
+    ps.maxSize = matchWin ? 0.18 : 0.14;
+
+    ps.minLifeTime = matchWin ? 1.1 : 0.85;
+    ps.maxLifeTime = matchWin ? 2.2 : 1.6;
+
+    ps.direction1 = new Vector3(-2.5, 4.0, -2.0);
+    ps.direction2 = new Vector3( 2.5, 9.0,  2.0);
+
+    ps.gravity = new Vector3(0, -5.5, 0);
+
+    ps.minEmitPower = matchWin ? 1.2 : 0.8;
+    ps.maxEmitPower = matchWin ? 4.5 : 3.2;
+
+    ps.emitRate = matchWin ? 1200 : 900;
+    ps.targetStopDuration = matchWin ? 0.22 : 0.16;
+    ps.disposeOnStop = true;
+
+    ps.start();
+  }
+
+  /** Firework burst — faster, brighter fountain used for set/match wins. */
+  private _fireworkBurst(position: Vector3, color1: Color4, color2: Color4, count: number, matchWin: boolean): void {
+    const ps = new ParticleSystem(`pointVFX_firework_${Date.now()}`, count, this._scene);
+    ps.particleTexture = this._pTex;
+    ps.emitter = position.clone();
+
+    ps.color1 = color1;
+    ps.color2 = color2;
+    ps.colorDead = new Color4(color1.r * 0.25, color1.g * 0.25, color1.b * 0.25, 0);
+
+    ps.minSize = matchWin ? 0.05 : 0.04;
+    ps.maxSize = matchWin ? 0.22 : 0.16;
+
+    ps.minLifeTime = matchWin ? 0.7 : 0.55;
+    ps.maxLifeTime = matchWin ? 1.8 : 1.2;
+
+    ps.direction1 = new Vector3(-7, 5, -7);
+    ps.direction2 = new Vector3( 7, 16,  7);
+
+    ps.gravity = new Vector3(0, -8.5, 0);
+
+    ps.minEmitPower = matchWin ? 3.5 : 2.8;
+    ps.maxEmitPower = matchWin ? 10.0 : 8.0;
+
+    ps.emitRate = matchWin ? 1800 : 1400;
+    ps.targetStopDuration = matchWin ? 0.10 : 0.08;
+    ps.disposeOnStop = true;
+
+    ps.start();
+  }
+
+  private _triggerWinnerCelebration(winnerRoot: AbstractMesh, teamIndex: 0 | 1, matchWin: boolean): void {
+    const pal = PALETTES[teamIndex];
+    const base = winnerRoot.position.clone();
+    const origin = base.addInPlace(new Vector3(0, matchWin ? 1.9 : 1.6, 0));
+
+    this._confettiBurst(origin.clone().addInPlace(new Vector3(0, 0.2, 0)), pal.burst1, pal.burst2, matchWin ? 260 : 160, matchWin);
+
+    const fireworkOffsets = matchWin
+      ? [
+          new Vector3(-1.1, 0.35, -0.4),
+          new Vector3( 0.0, 0.75,  0.0),
+          new Vector3( 1.1, 0.35,  0.4),
+          new Vector3( 0.0, 1.15,  0.9),
+        ]
+      : [
+          new Vector3(-0.8, 0.25, 0.0),
+          new Vector3( 0.8, 0.25, 0.0),
+        ];
+
+    for (const offset of fireworkOffsets) {
+      this._fireworkBurst(
+        origin.clone().addInPlace(offset),
+        pal.burst1,
+        pal.burst2,
+        matchWin ? 180 : 110,
+        matchWin,
+      );
+    }
+
+    this._highlight(winnerRoot, pal.glow, matchWin ? 3.2 : 2.0);
+    if (matchWin) {
+      this._flash(pal.flash);
+      this._shakeIntensity = Math.max(this._shakeIntensity, 0.017);
+      this._shakeDuration = Math.max(this._shakeDuration, 0.85);
+      this._shakeTimer = Math.min(this._shakeTimer, 0);
+    }
   }
 
   /** Loser droop — small dark particles drifting downward */

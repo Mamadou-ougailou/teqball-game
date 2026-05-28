@@ -56,6 +56,7 @@ export class Character implements ICharacter {
   private _currentAnimConfig: AnimConfig | null = null;
   private _currentActionKey: string | null = null;
   private readonly _socketGroundDistanceByAction = new Map<string, number>();
+  private _strikeBoneContactLocalPosition: Vector3 | null = null;
 
   // Some source clips are authored with left/right semantics inverted.
   // Apply deterministic correction here and keep manual mirror as an XOR override.
@@ -341,6 +342,10 @@ export class Character implements ICharacter {
     clip.goToFrame(sampleFrame);
     clip.pause();
 
+    // goToFrame sets bone TRS properties but _absoluteMatrix is stale until
+    // computeAbsoluteTransforms is called — without this, getAbsolutePosition
+    // returns the idle pose instead of the sought contact frame.
+    this.skeleton?.computeAbsoluteMatrices();
     this._currentStrikeBone = definition.strikeBone;
     this._currentStrikeBoneName = animConfig.activeBone?.trim() ? animConfig.activeBone : null;
     this.mesh.computeWorldMatrix(true);
@@ -354,6 +359,109 @@ export class Character implements ICharacter {
     if (!Number.isFinite(socketPos.y)) return null;
     // Court floor top plane is y = 0; distance is socket height above floor.
     return Math.max(0, socketPos.y);
+  }
+
+  private _sampleStrikeBoneLocalPositionForAction(definition: ActionDefinition): Vector3 | null {
+    if (!this._anim) return null;
+
+    const animConfig = getAnimConfigForClip(String(definition.clipKey));
+    if (!animConfig) return null;
+
+    const clip = this._anim.getClipByKey(definition.clipKey);
+    if (!clip) return null;
+
+    const startupTrim = this._getStartupTrimFrames(definition.clipKey);
+    const contactFrame = Math.max(0, Math.round(animConfig.contactFrame ?? 0));
+    const sampleFrame = Math.max(clip.from, Math.min(clip.to, clip.from + startupTrim + contactFrame));
+
+    const prevStrikeBone = this._currentStrikeBone;
+    const prevStrikeBoneName = this._currentStrikeBoneName;
+
+    this._anim.stop();
+    clip.start(false, 1.0, clip.from, clip.to, false);
+    clip.goToFrame(sampleFrame);
+    clip.pause();
+
+    // Same reason as in _sampleGroundDistanceForAction: cascade TRS → _absoluteMatrix.
+    this.skeleton?.computeAbsoluteMatrices();
+    this._currentStrikeBone = definition.strikeBone;
+    this._currentStrikeBoneName = animConfig.activeBone?.trim() ? animConfig.activeBone : null;
+    this.mesh.computeWorldMatrix(true);
+    const strikeWorld = this._getStrikeBonePositionRaw();
+    const localPos = Vector3.TransformCoordinates(strikeWorld, this.mesh.getWorldMatrix().clone().invert());
+
+    this._currentStrikeBone = prevStrikeBone;
+    this._currentStrikeBoneName = prevStrikeBoneName;
+    clip.stop();
+    this._anim.play('idle', true, 1.0, this._getStartupTrimFrames('idle'));
+
+    if (!Number.isFinite(localPos.x) || !Number.isFinite(localPos.y) || !Number.isFinite(localPos.z)) {
+      return null;
+    }
+    return localPos;
+  }
+
+  private _getStrikeBonePositionRaw(): Vector3 {
+    if (!this.skeleton || !this._currentStrikeBone) return this.mesh.position;
+
+    const hasAll = (name: string, parts: string[]): boolean => parts.every(p => name.includes(p));
+    const names = this.skeleton.bones.map(b => ({
+      bone: b,
+      key: b.name.toLowerCase().replace(/[._\s-]/g, ''),
+    }));
+
+    if (this._currentStrikeBoneName) {
+      const target = this._currentStrikeBoneName.toLowerCase().replace(/[._\s-]/g, '');
+      const exact =
+        names.find(n => n.key === target) ??
+        names.find(n => n.key.includes(target)) ??
+        names.find(n => target.includes(n.key));
+      if (exact) {
+        return exact.bone.getAbsolutePosition(this.mesh);
+      }
+    }
+
+    let bone = null as Skeleton['bones'][number] | null;
+    if (this._currentStrikeBone === 'head') {
+      const hit =
+        names.find(n => hasAll(n.key, ['headsocket'])) ??
+        names.find(n => hasAll(n.key, ['headcontroller'])) ??
+        names.find(n => hasAll(n.key, ['headctrl'])) ??
+        names.find(n => hasAll(n.key, ['headcontrol'])) ??
+        names.find(n => hasAll(n.key, ['head'])) ??
+        names.find(n => hasAll(n.key, ['neck']));
+      bone = hit?.bone ?? null;
+    } else if (this._currentStrikeBone === 'chest') {
+      const hit =
+        names.find(n => hasAll(n.key, ['chest'])) ??
+        names.find(n => hasAll(n.key, ['sternum'])) ??
+        names.find(n => hasAll(n.key, ['spine'])) ??
+        names.find(n => hasAll(n.key, ['hips'])) ??
+        names.find(n => hasAll(n.key, ['torso']));
+      bone = hit?.bone ?? null;
+    } else {
+      const side = this._activeFootSide;
+      const primary = side === 'left' ? ['left', 'foot'] : ['right', 'foot'];
+      const fallback = side === 'left' ? ['left', 'toe'] : ['right', 'toe'];
+      const hit =
+        names.find(n => hasAll(n.key, primary)) ??
+        names.find(n => hasAll(n.key, fallback)) ??
+        names.find(n => hasAll(n.key, ['foot']));
+      bone = hit?.bone ?? null;
+    }
+
+    if (!bone) {
+      // Fallback: use bone at position 10 or higher (usually foot bones)
+      if (this._currentStrikeBone === 'foot' && this.skeleton.bones.length > 10) {
+        return this.skeleton.bones[this.skeleton.bones.length - 3].getAbsolutePosition(this.mesh);
+      }
+      if (this._currentStrikeBone === 'chest' && this.skeleton.bones.length > 4) {
+        return this.skeleton.bones[Math.min(this.skeleton.bones.length - 4, 4)].getAbsolutePosition(this.mesh);
+      }
+      return this.mesh.position;
+    }
+
+    return bone.getAbsolutePosition(this.mesh);
   }
 
   precomputeActionSocketGroundDistances(actions: Array<string>): void {
@@ -487,7 +595,7 @@ export class Character implements ICharacter {
     }
 
     this._state = CharacterState.MOVING;
-    const clampedSpeed = Math.max(0.78, Math.min(1.40, locomotionSpeed));
+    const clampedSpeed = Math.max(0.82, Math.min(1.65, locomotionSpeed));
     const startupTrim = this._getStartupTrimFrames(desired);
     // Locomotion clips must never rotate the player away from their gameplay
     // facing direction (getCourtCenterFacing). Zero the compensation so that
@@ -519,7 +627,11 @@ export class Character implements ICharacter {
 
     const animConfig = getAnimConfigForClip(String(clipKey));
 
-    const actionSpeedRatio = speedRatio ?? Character.ACTION_ANIM_SPEED_RATIO;
+    // Foot kicks have later contact frames, so boost animation speed for snappier response.
+    let actionSpeedRatio = speedRatio ?? Character.ACTION_ANIM_SPEED_RATIO;
+    if (String(clipKey).toLowerCase().includes('scissor')) {
+      actionSpeedRatio *= 1.15;
+    }
     this._kickTimer = this._computeActionLockSeconds(animConfig, timer, actionSpeedRatio);
     this._currentActionKey = action;
     this._currentStrikeBone = strikeBone;
@@ -563,6 +675,7 @@ export class Character implements ICharacter {
 
     this._setMirrorX(shouldMirror);
     this._setFacingCompensationForKey(clipKey);
+    this._strikeBoneContactLocalPosition = this._sampleStrikeBoneLocalPositionForAction(definition);
     const startupTrim = this._getStartupTrimFrames(clipKey);
     this._anim.playOnce(
       clipKey,
@@ -676,66 +789,11 @@ export class Character implements ICharacter {
 
   /** Get the world position of the strike bone (head for header, foot for kicks) */
   getStrikeBonePosition(): Vector3 {
-    if (!this.skeleton || !this._currentStrikeBone) return this.mesh.position;
-
-    const hasAll = (name: string, parts: string[]): boolean => parts.every(p => name.includes(p));
-    const names = this.skeleton.bones.map(b => ({
-      bone: b,
-      key: b.name.toLowerCase().replace(/[._\s-]/g, ''),
-    }));
-
-    if (this._currentStrikeBoneName) {
-      const target = this._currentStrikeBoneName.toLowerCase().replace(/[._\s-]/g, '');
-      const exact =
-        names.find(n => n.key === target) ??
-        names.find(n => n.key.includes(target)) ??
-        names.find(n => target.includes(n.key));
-      if (exact) {
-        return exact.bone.getAbsolutePosition(this.mesh);
-      }
+    if (this._strikeBoneContactLocalPosition) {
+      return Vector3.TransformCoordinates(this._strikeBoneContactLocalPosition, this.mesh.getWorldMatrix());
     }
 
-    let bone = null as Skeleton['bones'][number] | null;
-    if (this._currentStrikeBone === 'head') {
-      const hit =
-        names.find(n => hasAll(n.key, ['headsocket'])) ??
-        names.find(n => hasAll(n.key, ['headcontroller'])) ??
-        names.find(n => hasAll(n.key, ['headctrl'])) ??
-        names.find(n => hasAll(n.key, ['headcontrol'])) ??
-        names.find(n => hasAll(n.key, ['head'])) ??
-        names.find(n => hasAll(n.key, ['neck']));
-      bone = hit?.bone ?? null;
-    } else if (this._currentStrikeBone === 'chest') {
-      const hit =
-        names.find(n => hasAll(n.key, ['chest'])) ??
-        names.find(n => hasAll(n.key, ['sternum'])) ??
-        names.find(n => hasAll(n.key, ['spine'])) ??
-        names.find(n => hasAll(n.key, ['hips'])) ??
-        names.find(n => hasAll(n.key, ['torso']));
-      bone = hit?.bone ?? null;
-    } else {
-      const side = this._activeFootSide;
-      const primary = side === 'left' ? ['left', 'foot'] : ['right', 'foot'];
-      const fallback = side === 'left' ? ['left', 'toe'] : ['right', 'toe'];
-      const hit =
-        names.find(n => hasAll(n.key, primary)) ??
-        names.find(n => hasAll(n.key, fallback)) ??
-        names.find(n => hasAll(n.key, ['foot']));
-      bone = hit?.bone ?? null;
-    }
-
-    if (!bone) {
-      // Fallback: use bone at position 10 or higher (usually foot bones)
-      if (this._currentStrikeBone === 'foot' && this.skeleton.bones.length > 10) {
-        return this.skeleton.bones[this.skeleton.bones.length - 3].getAbsolutePosition(this.mesh);
-      }
-      if (this._currentStrikeBone === 'chest' && this.skeleton.bones.length > 4) {
-        return this.skeleton.bones[Math.min(this.skeleton.bones.length - 4, 4)].getAbsolutePosition(this.mesh);
-      }
-      return this.mesh.position;
-    }
-
-    return bone.getAbsolutePosition(this.mesh);
+    return this._getStrikeBonePositionRaw();
   }
 
   /** Check if currently in active strike window */
@@ -753,13 +811,17 @@ export class Character implements ICharacter {
   }
 
   /** Force a specific animation by key (for scripted sequences). */
-  playAnimation(key: PlayerAnimKey  , loop = true, mirrorX = false, onEnd?: () => void): void {
+  playAnimation(key: PlayerAnimKey  , loop = true, mirrorX = false, onEnd?: () => void): boolean {
+    if (!this._anim || !this._anim.hasClip(key)) {
+      return false;
+    }
+
     this._setMirrorX(false);
     this._setFacingCompensationForKey(key);
     const startupTrim = this._getStartupTrimFrames(key);
     if (loop) {
       this._anim?.play(key, true, 1.0, startupTrim);
-      return;
+      return true;
     }
 
     this._captureFacingYaw();
@@ -767,10 +829,14 @@ export class Character implements ICharacter {
       key,
       'idle',
       1.0,
-      onEnd ?? (() => this._restoreFacingYaw()),
+      () => {
+        this._restoreFacingYaw();
+        onEnd?.();
+      },
       startupTrim,
       this._getStartupTrimFrames('idle'),
     );
+    return true;
   }
 
   getAnimationClipNames(): string[] {
@@ -978,6 +1044,10 @@ export class Character implements ICharacter {
         this._currentActionKey = null;
       }
     }
+  }
+
+  clearStrikeBoneContactSnapshot(): void {
+    this._strikeBoneContactLocalPosition = null;
   }
 
   dispose(): void {
