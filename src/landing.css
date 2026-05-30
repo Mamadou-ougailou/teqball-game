@@ -14,6 +14,112 @@
   --font-body: 'Barlow', sans-serif;
 }
 
+/* ── CONTROLS / HOW-TO-PLAY SCREEN (self-contained overlay) ── */
+#controls-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--c-overlay);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  padding: 5vh 6vw;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+  font-family: var(--font-body);
+  color: var(--c-white);
+}
+#controls-screen.active { opacity: 1; pointer-events: auto; }
+#controls-screen .cs-header { display: flex; align-items: center; gap: 24px; margin-bottom: 5vh; }
+#controls-screen h2 {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 5vw, 64px);
+  letter-spacing: 4px;
+  color: var(--c-gold);
+  margin: 0;
+}
+.controls-content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 30px 56px;
+  max-width: 1100px;
+}
+.controls-section h3 {
+  font-family: var(--font-condensed);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--c-gold);
+  font-size: 20px;
+  margin: 0 0 12px;
+  border-bottom: 1px solid var(--c-gold-dim);
+  padding-bottom: 6px;
+}
+.ctrl-row { display: flex; align-items: baseline; gap: 14px; margin: 9px 0; }
+.ctrl-keys { flex: 0 0 auto; min-width: 150px; }
+.ctrl-desc { color: var(--c-white); opacity: 0.85; font-size: 15px; line-height: 1.4; }
+.ctrl-note { display: block; }
+.ctrl-note .ctrl-desc { opacity: 0.7; font-style: italic; }
+#controls-screen kbd {
+  display: inline-block;
+  background: #16161c;
+  border: 1px solid var(--c-gold-dim);
+  border-radius: 5px;
+  padding: 2px 8px;
+  font-family: var(--font-condensed);
+  font-size: 13px;
+  color: var(--c-gold);
+  margin: 0 2px;
+}
+
+/* ── CHARACTER 3D PREVIEW (T-pose) ── */
+/* Absolutely positioned so it overlays the select screen without altering the
+   existing .cs-content layout. */
+.cs-viewer {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+  border: 1px solid var(--c-gold-dim);
+  border-radius: 12px;
+  background: radial-gradient(ellipse at 50% 30%, rgba(200,168,75,0.07), rgba(6,6,8,0.55));
+  overflow: hidden;
+}
+#cs-model-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none; /* shown once it loads */
+  padding: 16px;
+}
+.cs-model-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--c-muted);
+  font-family: var(--font-condensed);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+.cs-ph-icon { font-size: 64px; opacity: 0.5; }
+.cs-ph-text { font-size: 13px; }
+.cs-viewer-hint {
+  position: absolute;
+  left: 0; right: 0; bottom: 8px;
+  text-align: center;
+  font-family: var(--font-condensed);
+  letter-spacing: 2px;
+  font-size: 12px;
+  color: var(--c-gold);
+  opacity: 0.6;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body {
@@ -103,8 +209,7 @@ html, body {
 /* ── LAYOUT ── */
 #app {
   width: 100vw; height: 100vh;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: block;
   position: relative;
 }
 
@@ -176,15 +281,36 @@ html, body {
   pointer-events: none;
 }
 
-/* ── MENU PANEL (right) ── */
+/* ── MENU PANEL (full screen) ── */
 #menu-panel {
   position: relative;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 0 60px;
+  padding: 0 max(8vw, 60px);
   background: var(--c-bg);
   overflow: hidden;
+}
+
+/* Animated teqball backdrop canvas — sits behind all menu content */
+#canvas-menu-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Keep the logo, nav and bottom bar above the animated backdrop */
+#menu-panel > .logo-block,
+#menu-panel > nav,
+#menu-panel > .bottom-bar {
+  position: relative;
+  z-index: 2;
 }
 
 /* Ambient glow bg */
@@ -737,9 +863,10 @@ html, body {
 
 .cs-content {
   display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 60px;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  gap: 48px;
   flex: 1;
+  min-height: 0;
 }
 
 .cs-grid {
@@ -894,4 +1021,21 @@ html, body {
   font-size: 24px;
   color: var(--c-gold);
   letter-spacing: 0.05em;
+}
+
+.cs-power-desc {
+  margin-top: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.cs-power-meta {
+  margin-top: 10px;
+  font-family: var(--font-condensed, sans-serif);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--c-gold);
+  opacity: 0.85;
 }

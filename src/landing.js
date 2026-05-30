@@ -1,7 +1,7 @@
 /* ── DEBUG MODE: skip landing page ── */
 const __debugMode = new URLSearchParams(window.location.search).has('debug');
 if (__debugMode) {
-  // Show game screen immediately — without this it stays display:none and
+  // Show game screen immediately - without this it stays display:none and
   // the canvas has zero dimensions, causing Babylon to fail silently.
   const _dbgScreen = document.getElementById('game-screen');
   if (_dbgScreen) _dbgScreen.classList.add('active');
@@ -11,6 +11,9 @@ if (__debugMode) {
   if (_dbgIntro) _dbgIntro.style.display = 'none';
   (async () => {
     const mod = await import('/src/main.ts');
+    if (typeof mod.confirmCharacterSelection === 'function') {
+      mod.confirmCharacterSelection(window.selectedCharacterId || 'messi');
+    }
     await mod.main();
   })();
 } else {
@@ -112,9 +115,11 @@ function PlaceholderVideo(canvasId, config) {
     ctx.fillStyle = vig;
     ctx.fillRect(0, 0, W, H);
 
-    ctx.font = `700 ${W * 0.035}px 'Barlow Condensed', sans-serif`;
-    ctx.fillStyle = 'rgba(200,168,75,0.15)';
-    ctx.fillText(config.label || 'PREVIEW', W * 0.06, H * 0.88);
+    if (config.label) {
+      ctx.font = `700 ${W * 0.035}px 'Barlow Condensed', sans-serif`;
+      ctx.fillStyle = 'rgba(200,168,75,0.15)';
+      ctx.fillText(config.label, W * 0.06, H * 0.88);
+    }
 
     t += 0.016;
     requestAnimationFrame(draw);
@@ -190,23 +195,14 @@ function drawBall(ctx, W, H, t, color) {
   ctx.fill();
 }
 
-/* ── INIT CANVAS PLACEHOLDERS ── */
-PlaceholderVideo('canvas-arena', {
-  label: 'ARÈNES — CLOUD / RAVE / SPACE',
-  bgTop: '#06070a',
-  bgBot: '#0a0810',
-  orbColor: 'rgba(80,120,200,0.12)',
-  ballColor: '#6ab0ff',
-  particleCount: 55
-});
-
-PlaceholderVideo('canvas-char', {
-  label: 'PERSONNAGES & SUPERPOWERS',
-  bgTop: '#090608',
-  bgBot: '#0d090a',
-  orbColor: 'rgba(224,92,42,0.12)',
-  ballColor: '#e05c2a',
-  particleCount: 35
+/* ── INIT MENU BACKDROP (animated curved teqball table + bouncing ball) ── */
+PlaceholderVideo('canvas-menu-bg', {
+  label: '',
+  bgTop: '#060608',
+  bgBot: '#0a0a10',
+  orbColor: 'rgba(200,168,75,0.10)',
+  ballColor: '#c8a84b',
+  particleCount: 45
 });
 
 /* ── AMBIENT DRONE (Web Audio API) ── */
@@ -408,6 +404,14 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     const action = btn.dataset.action;
     if (action === 'play') {
       if (gameStarting) return;
+      // Already played once → restart cleanly with the (possibly new) character
+      // by reloading straight back into a fresh match.  Without this the menu
+      // got stuck because gameStarting stayed true and the old P1 was kept.
+      if (gameStarted) {
+        sessionStorage.setItem('teq_autostart', window.selectedCharacterId || 'messi');
+        window.location.reload();
+        return;
+      }
       gameStarting = true;
 
       // If prefetchGameAssets() was never called (e.g. user skipped intro), start now
@@ -420,8 +424,14 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       try {
         const mod = await mainLoadPromise;
 
+        // Lock in the menu selection so main() can finish building P1.
+        // Default to Messi if the user never opened Personnages.
+        if (typeof mod.confirmCharacterSelection === 'function') {
+          mod.confirmCharacterSelection(window.selectedCharacterId || 'messi');
+        }
+
         if (!preloadPromise) {
-          // Preload didn't start yet — show loading screen while it runs
+          // Preload didn't start yet - show loading screen while it runs
           loadingScreen.classList.add('active');
           preloadPromise = mod.preloadGame();
         }
@@ -436,7 +446,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
           await preloadPromise;
         }
 
-        // Scene is fully loaded — switch from invisible preloading to active
+        // Scene is fully loaded - switch from invisible preloading to active
         gameScreen.classList.remove('preloading');
         gameScreen.classList.add('active');
         mod.startGame();
@@ -454,6 +464,9 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       await showPreMatchCountdown();
     } else if (action === 'characters') {
       document.getElementById('character-select-screen').classList.add('active');
+      showCharacterModel(window.selectedCharacterId || 'messi');
+    } else if (action === 'controls') {
+      document.getElementById('controls-screen').classList.add('active');
     } else {
       showTransition(btn.textContent.trim().split('\n').pop().trim().toUpperCase(), () => {
         setTimeout(() => {
@@ -481,7 +494,7 @@ if (startBtn) {
     await showIntroNarration();
 
     // 4. Show menu
-    app.style.display = 'grid';
+    app.style.display = 'block';
     app.style.opacity = '0';
     app.style.transition = 'opacity 1s ease';
     
@@ -501,31 +514,42 @@ backBtn.addEventListener('click', () => {
   showTransition('MENU', () => {
     gameScreen.classList.remove('active');
     backBtn.style.display = 'none';
-    app.style.display = 'grid';
+    app.style.display = 'block';
     document.body.style.cursor = 'none';
+    gameStarting = false; // allow Play to fire again from the menu
     setTimeout(hideTransition, 200);
   });
+});
+
+/* ── CONTROLS SCREEN BACK ── */
+document.getElementById('controls-back-btn')?.addEventListener('click', () => {
+  document.getElementById('controls-screen').classList.remove('active');
 });
 
 /* ── CHARACTER SELECT ── */
 const charactersData = [
   {
-    id: 'maradona',
-    name: 'Maradona',
-    subtitle: 'Lower power, higher finesse',
-    power: 'SPEED-BURST',
-    stats: { speed: 85, jump: 30, power: 100, spin: 95 }
+    id: 'messi',
+    name: 'Messi',
+    subtitle: 'Rapide, précis, équilibré',
+    power: 'SUPERCHARGE',
+    desc: 'Déclenche une frappe surchargée — la balle s\'embrase et traverse le terrain en laissant une traînée de feu, bien trop rapide pour être renvoyée par l\'adversaire.',
+    meta: 'Touche F · gagnez 2 points d\'affilée pour la recharger',
+    stats: { speed: 90, jump: 25, power: 95, spin: 90 }
   },
   {
-    id: 'howard',
-    name: 'Howard',
-    subtitle: 'Balanced allrounder',
-    power: 'MEGA-BOUNCE',
-    stats: { speed: 80, jump: 20, power: 120, spin: 80 }
+    id: 'maradona',
+    name: 'Maradona',
+    subtitle: 'Moins de puissance, plus de finesse',
+    power: 'CHAOS CURVE',
+    desc: 'Dès que la balle rebondit sur la table adverse, sa trajectoire repart violemment dans la direction opposée — impossible à lire et à renvoyer. Le changement ne se produit qu\'après le rebond sur la table, jamais avant.',
+    meta: 'Touche F · gagnez 2 points d\'affilée pour la recharger',
+    stats: { speed: 85, jump: 30, power: 100, spin: 95 }
   }
 ];
 
-let selectedCharId = 'howard';
+let selectedCharId = 'messi';
+window.selectedCharacterId = selectedCharId;
 
 function initCharacterSelect() {
   const grid = document.getElementById('cs-grid');
@@ -545,6 +569,7 @@ function initCharacterSelect() {
       selectedCharId = char.id;
       window.selectedCharacterId = char.id; // Expose globally for main.ts
       updateCharacterStats(char);
+      showCharacterModel(char.id);
     });
     grid.appendChild(card);
   });
@@ -557,6 +582,10 @@ function updateCharacterStats(char) {
   document.getElementById('cs-char-name').textContent = char.name;
   document.getElementById('cs-char-subtitle').textContent = char.subtitle;
   document.getElementById('cs-power-name').textContent = char.power;
+  const powerDescEl = document.getElementById('cs-power-desc');
+  if (powerDescEl) powerDescEl.textContent = char.desc || '';
+  const powerMetaEl = document.getElementById('cs-power-meta');
+  if (powerMetaEl) powerMetaEl.textContent = char.meta || '';
   
   // Reset width to 0 briefly to trigger CSS transition
   ['speed', 'jump', 'power', 'spin'].forEach(stat => {
@@ -576,4 +605,51 @@ document.getElementById('cs-back-btn')?.addEventListener('click', () => {
 });
 
 initCharacterSelect();
+
+/* ── CHARACTER PREVIEW (static T-pose image) ── */
+// Shows a PNG of each character in T-pose.  Drop the images at:
+//   public/models/Messi.png   and   public/models/Maradona.png
+// (served at /models/<File>.png).  Paths are case-sensitive on most servers,
+// so these must match the actual filenames exactly.  If an image is missing the
+// styled placeholder is shown instead, so the menu never looks broken.
+const CHAR_IMAGE_URL = {
+  messi: '/models/Messi.png',
+  maradona: '/models/Maradona.png',
+};
+
+function showCharacterModel(charId) {
+  const img = document.getElementById('cs-model-img');
+  const placeholder = document.getElementById('cs-model-placeholder');
+  if (!img || !placeholder) return;
+
+  const url = CHAR_IMAGE_URL[charId] || CHAR_IMAGE_URL.messi;
+  img.onload = () => {
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+  };
+  img.onerror = () => {
+    img.style.display = 'none';
+    placeholder.style.display = 'flex';
+  };
+  img.src = url;
+}
+
+/* ── AUTO-RESTART BOOT PATH ── */
+// Returning to the menu and pressing Play after a finished game reloads the page
+// with this flag set, so we boot straight into a fresh match with the chosen
+// (possibly new) character — bypassing the intro.
+try {
+  const __autostart = sessionStorage.getItem('teq_autostart');
+  if (__autostart) {
+    sessionStorage.removeItem('teq_autostart');
+    selectedCharId = __autostart;
+    window.selectedCharacterId = __autostart;
+    if (startScreen) startScreen.style.display = 'none';
+    const _introEl = document.getElementById('intro-screen');
+    if (_introEl) _introEl.style.display = 'none';
+    prefetchGameAssets();
+    const _playBtn = document.getElementById('btn-play');
+    if (_playBtn) _playBtn.click();
+  }
+} catch (_) {}
 } // ← end initLandingPage()

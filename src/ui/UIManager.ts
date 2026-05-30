@@ -34,6 +34,9 @@ export class UIManager implements IEntity {
   constructor(scene: Scene) {
     // One fullscreen texture shared by every UI layer.
     this._adt = AdvancedDynamicTexture.CreateFullscreenUI('GameUI', true, scene);
+    // Keep the scoreboard/HUD crisp: don't let any camera post-process (bloom)
+    // bleed a glow onto the UI layer.
+    if (this._adt.layer) this._adt.layer.applyPostProcess = false;
 
     this._hud = new HUD(this._adt);
     this._announcement = new PointAnnouncement(this._adt, scene);

@@ -48,12 +48,13 @@ export class SceneBuilder {
 
     if (!options?.debug) {
       const pipeline = new DefaultRenderingPipeline("default", true, scene, [camera]);
-      pipeline.chromaticAberrationEnabled = true;
       pipeline.chromaticAberration.aberrationAmount = 25;
       pipeline.chromaticAberration.radialIntensity = 1;
-      pipeline.bloomEnabled = true;
-      pipeline.bloomThreshold = 0.7;
-      pipeline.bloomWeight = 0.6;
+      pipeline.chromaticAberrationEnabled = true;
+      // Bloom disabled: it made the bright white court lines and the scoreboard
+      // text glow.  The ball-fire effect uses its own GlowLayer, so it is
+      // unaffected by turning bloom off here.
+      pipeline.bloomEnabled = false;
     }
 
     // Initialize physics engine
