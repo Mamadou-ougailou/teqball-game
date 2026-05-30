@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
-package-lock.json
-yarn.lock
+# package-lock.json must be committed: CI (npm ci + setup-node cache) needs it.
 
 # Build output
 dist/
