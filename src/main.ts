@@ -365,14 +365,23 @@ export async function main(): Promise<void> {
     const cameraFollowMaxOffsetX = 1.8 * SCALE;
     const cameraFollowMaxOffsetZ = 2.2 * SCALE;
 
-    // Opening 360° fly-around: when the render loop first runs (start of a match)
-    // the camera makes one full orbit of the court/players, then settles back to
-    // its normal fixed angle.  Only alpha is animated; the per-frame follow below
-    // (which only moves camera.target) keeps the framing fixed afterwards.
-    const cameraIntroDuration = 3.4; // seconds for the full 360
+    // Opening cinematic establishing shot: when the render loop first runs
+    // (start of a match) the camera opens on a high, wide near-overhead view and
+    // sweeps one full turn around the arena, then descends and zooms into the
+    // normal play framing.  alpha (orbit), beta (overhead → play angle) and
+    // radius (wide → close) are all animated; the per-frame follow below only
+    // moves camera.target, so the framing stays fixed once the intro settles.
+    // The pre-serve countdown is held until this finishes (see the countdown
+    // tick) so the fly-around truly plays *before* the match begins.
+    const cameraIntroDuration = 4.0; // seconds for the full establishing shot
     const cameraIntroBaseAlpha = camera.alpha;
+    const cameraIntroBaseBeta = camera.beta;
+    const cameraIntroBaseRadius = camera.radius;
+    const cameraIntroStartBeta = 0.32;                  // near-overhead opening angle
+    const cameraIntroStartRadius = camera.radius * 1.7; // pulled back for a wide shot
     let cameraIntroElapsed = 0;
     let cameraIntroDone = false;
+    let cameraIntroHudHidden = false;
 
     // ------------------------------------------------------------------
     // Collision layers (bit masks)
@@ -3995,7 +4004,9 @@ export async function main(): Promise<void> {
     const superHudEl = document.createElement('div');
     superHudEl.id = 'p1-super-hud';
     superHudEl.style.cssText =
-      'position:fixed;left:18px;top:18px;z-index:9999;font-family:Arial,sans-serif;' +
+      // top:70px keeps this clear of the "← Menu" back button (top:24px) which
+      // shares the top-left corner; otherwise this banner overlaps it.
+      'position:fixed;left:18px;top:70px;z-index:9999;font-family:Arial,sans-serif;' +
       'font-weight:800;font-size:16px;letter-spacing:0.6px;padding:11px 16px;border-radius:10px;' +
       'pointer-events:none;border:1px solid rgba(255,255,255,0.3);transition:all 0.15s;';
     document.body.appendChild(superHudEl);
@@ -4601,20 +4612,25 @@ export async function main(): Promise<void> {
       // Pre-serve countdown tick.  While >0, gameplay actions are suppressed
       // (handled by serveSetupActive below) and the HUD shows the timer.
       if (preServeCountdownTimer > 0) {
-        const prevCeil = Math.ceil(preServeCountdownTimer);
-        preServeCountdownTimer = Math.max(0, preServeCountdownTimer - deltaTime);
-        const nextCeil = Math.ceil(preServeCountdownTimer);
-        if (nextCeil !== prevCeil) {
-          EventBus.emit('serve:countdown', preServeCountdownTimer > 0 ? preServeCountdownTimer : null);
-        }
-        if (preServeCountdownTimer <= 0) {
-          // Countdown finished — release the freeze so play can begin.
-          pointFreezeActive = false;
-          pointFreezeWinner = null;
-          EventBus.emit('serve:countdown', null);
+        // Hold the very first countdown until the opening cinematic finishes, so
+        // the fly-around plays before "3-2-1". cameraIntroDone latches true after
+        // the first ~4s, so every later (post-point) countdown ticks normally.
+        if (cameraIntroDone) {
+          const prevCeil = Math.ceil(preServeCountdownTimer);
+          preServeCountdownTimer = Math.max(0, preServeCountdownTimer - deltaTime);
+          const nextCeil = Math.ceil(preServeCountdownTimer);
+          if (nextCeil !== prevCeil) {
+            EventBus.emit('serve:countdown', preServeCountdownTimer > 0 ? preServeCountdownTimer : null);
+          }
+          if (preServeCountdownTimer <= 0) {
+            // Countdown finished — release the freeze so play can begin.
+            pointFreezeActive = false;
+            pointFreezeWinner = null;
+            EventBus.emit('serve:countdown', null);
+          }
         }
         // Hold ball at the serve anchor while the countdown is visible so it
-        // never drifts under gravity.
+        // never drifts under gravity (also keeps it pinned during the cinematic).
         if (ball?.mesh?.physicsBody && serveState.active) {
           ball.mesh.physicsBody.setLinearVelocity(Vector3.Zero());
           ball.mesh.physicsBody.setAngularVelocity(Vector3.Zero());
@@ -6676,17 +6692,28 @@ export async function main(): Promise<void> {
 
       // UI updates are driven by EventBus and BabylonJS animations via UIManager.
 
-      // Opening 360° orbit — runs once at the very start, then the camera is
-      // fixed and only the subtle target-follow below remains active.
+      // Opening cinematic establishing shot — runs once at the very start, then
+      // the camera is fixed and only the subtle target-follow below stays active.
       if (!cameraIntroDone) {
+        // Hide the "3" countdown numeral while the cinematic plays.
+        if (!cameraIntroHudHidden) {
+          EventBus.emit('serve:countdown', null);
+          cameraIntroHudHidden = true;
+        }
         cameraIntroElapsed += Math.min(deltaTime, 0.05); // clamp first-frame spikes
         const t = Math.min(1, cameraIntroElapsed / cameraIntroDuration);
-        // easeInOutQuad so the orbit accelerates and decelerates smoothly.
+        // easeInOutQuad so the sweep accelerates and decelerates smoothly.
         const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         camera.alpha = cameraIntroBaseAlpha - e * Math.PI * 2;
+        camera.beta = cameraIntroStartBeta + (cameraIntroBaseBeta - cameraIntroStartBeta) * e;
+        camera.radius = cameraIntroStartRadius + (cameraIntroBaseRadius - cameraIntroStartRadius) * e;
         if (t >= 1) {
           camera.alpha = cameraIntroBaseAlpha;
+          camera.beta = cameraIntroBaseBeta;
+          camera.radius = cameraIntroBaseRadius;
           cameraIntroDone = true;
+          // Camera has settled — reveal the countdown so "3-2-1" starts now.
+          EventBus.emit('serve:countdown', preServeCountdownTimer > 0 ? preServeCountdownTimer : null);
         }
       }
 
