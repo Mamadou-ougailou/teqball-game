@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Re-injects COOP/COEP headers client-side so SharedArrayBuffer (Havok physics)
+     works on static hosts like GitHub Pages, which can't set custom headers.
+     Must load before any other script. Relative path = works on a sub-path too. -->
+<script src="coi-serviceworker.js"></script>
 <link rel="icon" type="image/svg+xml" href="/teqball-icon.svg" />
 <title>TEQBALL - Surrealistic</title>
 <link rel="stylesheet" href="/src/landing.css" />
@@ -178,6 +182,6 @@
   </div>
 </div>
 
-<script src="/src/landing.js"></script>
+<script type="module" src="/src/landing.js"></script>
 </body>
 </html>

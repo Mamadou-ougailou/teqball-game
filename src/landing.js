@@ -207,7 +207,7 @@ PlaceholderVideo('canvas-menu-bg', {
 
 /* ── AMBIENT DRONE (Web Audio API) ── */
 function createAmbientDrone() {
-   const audio = new Audio('/audio/intro.mp3');
+   const audio = new Audio('audio/intro.mp3');
     audio.loop = true;
     audio.volume = 0.35;
     audio.play().catch(() => {}); // catch nécessaire (politique navigateur)
@@ -613,8 +613,8 @@ initCharacterSelect();
 // so these must match the actual filenames exactly.  If an image is missing the
 // styled placeholder is shown instead, so the menu never looks broken.
 const CHAR_IMAGE_URL = {
-  messi: '/models/Messi.png',
-  maradona: '/models/Maradona.png',
+  messi: 'models/Messi.png',
+  maradona: 'models/Maradona.png',
 };
 
 function showCharacterModel(charId) {

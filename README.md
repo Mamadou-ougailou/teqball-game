@@ -52,7 +52,7 @@ appliquer à nos modèles 3D. L'IA n'est donc pas seulement *dans* le jeu : elle
 
 Le déplacement est volontairement placé sur les **flèches directionnelles** : elles sont
 identiques sur **AZERTY et QWERTY**, donc aucun souci de disposition de clavier pour les
-testeurs (coucou nos amis américains 👋).
+testeurs.
 
 | Action | Touche |
 |---|---|
@@ -142,7 +142,7 @@ fine balle ↔ squelette par fenêtres de frames, et conception d'une IA adversa
 
 ## 👥 L'équipe
 
-- **Mammadou Diallo Ougailou**
+- **Mamadou Diallo Ougailou**
 - **Stevenson Jules**
 - **Bierhoff Theolien**
 

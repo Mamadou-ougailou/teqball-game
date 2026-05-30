@@ -3,7 +3,11 @@ import { resolve } from 'path';
 
 export default defineConfig({
   root: '.',
-  base: '/',
+  // Relative base so the build works whether it is served from the domain root
+  // (dev / custom domain) or a sub-path (GitHub Pages project site
+  // e.g. /teqball-game/). Combined with the relative asset paths used at
+  // runtime (models/, audio/, HavokPhysics.wasm), the game is location-agnostic.
+  base: './',
   server: {
     port: 5173,
     strictPort: false,

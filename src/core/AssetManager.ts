@@ -114,12 +114,12 @@ export class AssetManager implements IEntity {
     let container: AssetContainer;
     let firstError: unknown;
     try {
-      container = await SceneLoader.LoadAssetContainerAsync('/models/', file, this._scene);
+      container = await SceneLoader.LoadAssetContainerAsync('models/', file, this._scene);
     } catch (err) {
       firstError = err;
-      console.warn(`[AssetManager] /models/${file} failed:`, err);
+      console.warn(`[AssetManager] models/${file} failed:`, err);
       try {
-        container = await SceneLoader.LoadAssetContainerAsync('/assets/models/', file, this._scene);
+        container = await SceneLoader.LoadAssetContainerAsync('assets/models/', file, this._scene);
       } catch (err2) {
         // Both paths failed — surface the original error (more informative)
         throw new Error(

@@ -59,7 +59,9 @@ export class SceneBuilder {
 
     // Initialize physics engine
     const havokInstance = await HavokPhysics({
-      locateFile: () => '/HavokPhysics.wasm'
+      // Relative path: resolves against the page URL, so it works both at the
+      // domain root and on a GitHub Pages sub-path.
+      locateFile: () => 'HavokPhysics.wasm'
     });
     const havokPlugin = new HavokPlugin(true, havokInstance);
     scene.enablePhysics(new Vector3(0, -9.81, 0), havokPlugin);
