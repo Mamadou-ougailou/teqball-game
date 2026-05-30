@@ -1,11 +1,11 @@
 name: Deploy to GitHub Pages
 
-# Builds the game and publishes it to GitHub Pages on every push to integration.
+# Builds the game and publishes it to GitHub Pages on every push to main.
 # Requires: repo Settings → Pages → "Build and deployment" → Source = "GitHub Actions".
 
 on:
   push:
-    branches: [integration]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
