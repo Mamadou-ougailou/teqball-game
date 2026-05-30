@@ -1,233 +1,196 @@
-# Surrealistic Teqball - 3D Web Game
+# ⚽ Teqball — Surrealistic Edition
 
-A collaborative, browser-based 3D teqball game built with **BabylonJS**, **TypeScript**, and **Vite**.
+> Un jeu de teqball en 3D dans le navigateur, où vous affrontez **Howard**, un adversaire
+> entièrement piloté par une intelligence artificielle.
+> Développé avec **BabylonJS**, **TypeScript** et **Vite** (physique **Havok**).
 
-## Quick Start
+---
+
+## 🎮 Jouer maintenant
+
+- **🌐 Jeu en ligne (hébergé)** : <!-- TODO : coller ici l'URL GitHub Pages / itch.io --> _à compléter_
+- **▶️ Vidéo de présentation YouTube** : <!-- TODO : coller ici le lien de la vidéo --> _à venir_
+
+> 💡 **Le jeu se joue entièrement au clavier.** Pas besoin de souris, ni de manette, ni de
+> matériel particulier — parfait pour le tester sur un ordinateur portable.
+
+---
+
+## 🧠 Pourquoi c'est dans le thème « IA Edition »
+
+L'IA est au cœur du projet, et de **deux** manières concrètes :
+
+### 1. Un adversaire piloté par une IA — Howard
+
+Howard, votre adversaire, **ne reçoit aucune entrée humaine** : il est intégralement contrôlé
+par une IA qui, à chaque image (frame) :
+
+1. **Prédit la trajectoire de la balle** et son point de chute sur son côté de la table
+   (prédiction physique / balistique de la balle).
+2. **Se déplace vers le point d'interception**, case par case sur une grille qui découpe le
+   terrain, en jouant l'animation de course correspondant à sa direction.
+3. **Choisit où renvoyer la balle** : la zone cible sur la table adverse est tirée par
+   **échantillonnage pondéré**. L'IA privilégie les coins et les diagonales pour varier ses
+   angles et vous prendre à contre-pied, plutôt que de renvoyer bêtement au centre.
+4. **Sélectionne l'animation de frappe ou de service** la mieux adaptée à la situation.
+
+C'est une **IA comportementale déterministe** (heuristiques + prédiction physique), pas un
+réseau de neurones : elle reste lisible, débogable et rejouable — un choix assumé pour garder
+la maîtrise du gameplay.
+
+### 2. Des animations générées par capture de mouvement assistée par IA
+
+Toutes les animations des joueurs ont été produites grâce à une **plateforme de capture de
+mouvement par IA** : nous avons **filmé nos propres vidéos** (gestes de teqball, services,
+réceptions, frappes…) puis extrait les squelettes / mouvements qui nous intéressaient pour les
+appliquer à nos modèles 3D. L'IA n'est donc pas seulement *dans* le jeu : elle a aussi servi à
+*fabriquer* le jeu.
+
+---
+
+## 🕹️ Commandes
+
+Le déplacement est volontairement placé sur les **flèches directionnelles** : elles sont
+identiques sur **AZERTY et QWERTY**, donc aucun souci de disposition de clavier pour les
+testeurs (coucou nos amis américains 👋).
+
+| Action | Touche |
+|---|---|
+| Se déplacer | **↑ ↓ ← →** (flèches directionnelles) |
+| Frapper / Servir | **Espace** |
+| Tir puissant | **Espace × 2** (double appui) |
+| Viser à gauche / droite | **← ou →** maintenue **+ Espace** |
+| Changer de type de service | **Q** (avant de servir) |
+| Revenir au service / relancer l'échange | **R** |
+| Déclencher le superpouvoir | **F** (quand il est PRÊT) |
+
+> 🖱️ **Pas de souris ni de manette nécessaires.**
+
+---
+
+## 🎯 But du jeu
+
+Renvoyez la balle sur la table adverse sans la laisser rebondir deux fois de votre côté.
+Variez vos angles et utilisez les **tirs puissants en diagonale** pour prendre l'IA à
+contre-pied et marquer le point.
+
+### Personnages & superpouvoirs
+
+Vous choisissez votre joueur en début de partie. Chacun a ses stats (vitesse, saut, puissance,
+effet) et un **superpouvoir** :
+
+- **Messi** — *SUPERCHARGE*
+- **Maradona** — *CHAOS CURVE*
+
+Le superpouvoir se déclenche avec **F** lorsqu'il est chargé : gagnez **2 points d'affilée**
+pour le recharger (une charge est aussi offerte au début de chaque set).
+
+Face à vous : **Howard**, l'adversaire IA.
+
+---
+
+## 🧪 Tester facilement (note pour le jury)
+
+- Au lancement, un écran **« Commencer l'expérience »** débloque l'audio, puis une courte
+  narration pose le contexte avant le match.
+- Le menu permet d'accéder directement à **Jouer**, **Personnages** et **Commandes**.
+- Une partie démarre vite ; le premier set est accessible pour prendre le jeu en main.
+
+---
+
+## 🛠️ Galères & décisions de conception
+
+La partie dont on est fiers… et celle qui nous a fait le plus suer. Quelques-uns de nos vrais
+chantiers :
+
+### 1. Trouver les bonnes animations
+Les animations de teqball ne courent pas les rues. Nous avons fini par **tourner nous-mêmes des
+vidéos** de gestes, puis par passer par une **plateforme de capture de mouvement par IA** pour
+en extraire les mouvements et ne garder que ceux qui collaient au jeu (service, réception,
+frappes, déplacements). Long, itératif, mais c'est ce qui donne sa personnalité au jeu.
+
+### 2. Synchroniser la balle avec le squelette du modèle 3D
+Le vrai casse-tête : faire en sorte que la balle soit touchée **au bon moment** par le bon os du
+joueur. Une animation, c'est une suite de frames ; le contact réel avec la balle n'a lieu que
+sur **quelques frames précises**. Nous avons donc dû, pour chaque animation, repérer le **nombre
+de frames** et la **fenêtre de frames** pendant laquelle le joueur exécute son geste de contact,
+afin de déclencher la collision et l'impulsion de la balle pile à cet instant. Sans ça, la balle
+partait avant ou après le geste, et tout paraissait faux.
+
+### 3. Gérer l'agent IA qui anime Howard
+Faire jouer une IA au teqball de façon **crédible mais battable** a demandé beaucoup de réglages :
+prédiction de la trajectoire, repositionnement défensif, choix des zones de renvoi, fenêtres de
+réaction… Trouver l'équilibre entre une IA qui « triche » (toujours au bon endroit) et une IA
+trop molle a été un travail d'ajustement permanent.
+
+---
+
+## ⚙️ Stack & défis techniques
+
+- **Moteur 3D** : BabylonJS 6
+- **Langage** : TypeScript (strict)
+- **Bundler / dev server** : Vite
+- **Physique** : Havok (WASM) — nécessite l'isolation cross-origin (en-têtes COOP/COEP côté serveur)
+- **Audio** : Howler
+- **Modèles & animations** : `.glb` (capture de mouvement assistée par IA)
+
+Défis techniques notables : pipeline d'animation par capture de mouvement IA, synchronisation
+fine balle ↔ squelette par fenêtres de frames, et conception d'une IA adversaire comportementale
+(prédiction balistique + déplacement sur grille + placement de balle pondéré).
+
+---
+
+## 👥 L'équipe
+
+- **Mammadou Diallo Ougailou**
+- **Stevenson Jules**
+- **Bierhoff Theolien**
+
+<!-- TODO (optionnel mais apprécié du jury) : préciser qui a fait quoi
+     (gameplay / IA / animation / 3D / UI / audio…) -->
+
+---
+
+## 💻 Lancer le projet en local
 
 ```bash
-# Install dependencies
+# Installer les dépendances
 npm install
 
-# Start dev server (opens browser automatically)
+# Serveur de développement (ouvre le navigateur)
 npm run dev
 
-# Build for production
+# Build de production → dossier dist/
 npm run build
 
-# Run tests
-npm test
-
-# Lint code
-npm run lint
-npm run lint:fix
-
-# Format code
-npm run format
-
-# Type check
-npm run typecheck
+# Prévisualiser le build
+npm run preview
 ```
 
-## Project Structure
-
-```
-src/
-  core/              → Engine, Scene, Assets, EventBus, Interfaces, Constants
-  systems/           → Input, Physics, Camera, Rendering
-  entities/          → Character, Ball, Arena, Table
-  gameplay/          → Match logic, Rules, Superpowers
-  animation/         → Animation system and IK
-  vfx/               → Particles, Shaders, Trails
-  ui/                → HUD, Menus, Screens
-  audio/             → Sound, Music
-  data/              → JSON configs (characters, arenas, rules, abilities)
-
-tests/               → Unit and integration tests (Vitest)
-
-assets/              → Binary files (Git LFS tracked)
-  models/            → .glb character and arena models
-  textures/          → Compressed .ktx2 textures
-  audio/             → .ogg music and SFX
-  shaders/           → NodeMaterial JSON files
-  particles/         → Particle system JSON files
-  env/               → HDR environment maps
-
-docs/                → Architecture, guidelines, onboarding
-```
-
-## Git Workflow (Section 15)
-
-### Branch Strategy
-
-| Branch     | Purpose                    | Created From | Merged To |
-|-----------|----------------------------|----------|-----------|
-| `main`    | Production (auto-deploy)   | Never direct | N/A |
-| `dev`     | Integration/staging        | Never direct | `main` |
-| `feature/*` | Task-specific work       | `dev` | `dev` |
-| `fix/*`   | Bug fixes                  | `dev` | `dev` |
-| `assets/*` | Large binaries            | `dev` | `dev` |
-
-### Git LFS Setup
+### Avec Docker
 
 ```bash
-# Run once after clone
-git lfs install
-git lfs track '*.glb' '*.png' '*.jpg' '*.ktx2' '*.ogg' '*.mp3' '*.hdr'
+docker compose up dev     # développement (hot reload, port 5173)
+docker compose up prod    # production via nginx (port 8080)
 ```
 
-### Daily Workflow
+### Scripts utiles
 
 ```bash
-# Start work on a feature
-git checkout dev && git pull origin dev
-git checkout -b feature/your-task-name
-
-# Commit with conventional messages
-git commit -m "feat: describe your change"
-# Prefixes: feat:, fix:, chore:, assets:, test:, docs:
-
-# Push when ready
-git push -u origin feature/your-task-name
-
-# Create PR on GitHub (requires 1 approval + CI green)
+npm test          # tests unitaires (Vitest)
+npm run lint      # ESLint
+npm run typecheck # vérification des types
+npm run format    # Prettier
 ```
 
-### Merge Rules
+> ⚠️ La physique Havok utilise `SharedArrayBuffer` : le serveur doit envoyer les en-têtes
+> `Cross-Origin-Opener-Policy: same-origin` et `Cross-Origin-Embedder-Policy: require-corp`
+> (déjà configurés dans `nginx.conf` et `vite.config.ts`).
 
-- **Pull Requests Required**: No direct pushes to `dev` or `main`
-- **CI Must Pass**: All tests, linting, build checks
-- **Dev Merges**: Require 1 approval
-- **Main Merges**: Require 2 approvals
-- **Asset PRs**: Require Dev B approval for file size
+---
 
-## Developer Roles
+## 🙏 Crédits
 
-### Dev A - Core Architecture & Logic
-**Responsibilities:**
-- `src/core/` - Engine, interfaces, constants
-- `src/systems/` - Input, physics, collision
-- `src/gameplay/` - Scoring, rules
-- Match/rally logic
-- CI/CD setup
-
-**Initial Setup:**
-- Initialize repo structure
-- Create all STUB files (day 1)
-- Setup ESLint, Prettier, TypeScript
-- Setup GitHub Actions
-
-### Dev B - 3D Graphics & Animation
-**Responsibilities:**
-- `src/systems/Camera*` and `RenderPipeline`
-- `src/animation/` - Animation system
-- `src/vfx/` - Particles, shaders, trails
-- Assets: Models, textures, shaders
-- Visual polish and effects
-
-**Phase 1 Priority:**
-- Load teqball_table.glb with physics
-- Load character models with skeletons
-- Setup camera following
-
-### Dev C - UI, Audio & Game Feel
-**Responsibilities:**
-- `src/ui/` - All menus, HUD, overlays
-- `src/audio/` - Sounds, music
-- `src/data/` - JSON configs
-- Game feel, audio synchronization
-- QA and polish
-
-**Phase 1 Priority:**
-- UI scaffolds
-- Audio and music management
-
-## Testing Strategy
-
-All unit tests in `tests/` directory. Run with:
-
-```bash
-npm test           # Run once
-npm run test:watch # Watch mode during development
-```
-
-**Test Categories:**
-- `ruleEngine.test.ts` - Pure functions (no BabylonJS)
-- `eventBus.test.ts` - Event system
-- `characterState.test.ts` - State machine
-- `superpower.test.ts` - Ability cooldowns
-- `matchFlow.test.ts` - Integration (Phase 3+)
-- `physicsSanity.test.ts` - Reproducibility (Phase 2+)
-
-## Code Quality Standards
-
-### TypeScript
-- **Strict Mode**: Always enabled (`tsconfig.json`)
-- **No `any`**: Explicit types required
-- **Meaningful Variables**: Clear naming
-
-### Linting (ESLint)
-```bash
-npm run lint       # Check
-npm run lint:fix   # Auto-fix
-```
-
-**Rules:**
-- Use `const` over `let`/`var`
-- `===` always (no `==`)
-- No console.logs in commits (use debug flag)
-
-### Formatting (Prettier)
-```bash
-npm run format  # Auto-format all code
-```
-
-Applied automatically on commit (Husky pre-commit hook - Phase 1).
-
-## Architecture Overview
-
-```
-User Input
-    ↓
-InputManager → EventBus ←→ All Systems
-    ↓
-PhysicsWorld (Havok)
-    ↓
-CollisionDetector → RuleEngine
-    ↓
-MatchManager → Scoring
-    ↓
-UI / Audio / VFX
-```
-
-**Key Principle:** All systems communicate via **EventBus**, never direct calls.
-
-## Phase Timeline
-
-| Phase | Duration | Focus |
-|-------|----------|---------|
-| 0 | Week 1 | Setup, learning, hello world |
-| 1 | Weeks 2-3 | Core game loop, physics, table, ball |
-| 2 | Weeks 4-5 | Character controller, animation |
-| 3 | Weeks 6-7 | Match rules, scoring, local 2v2 |
-| 4 | Weeks 8-9 | Visual polish, effects, surreal style |
-| 5 | Week 10 | Optimization, deployment |
-
-## Deployment
-
-Currently scaffolded for deploy to **Vercel** or **Netlify**:
-- Build: `npm run build` → outputs to `dist/`
-- Auto-deploy on push to `main` branch
-
-## Useful Resources
-
-- [BabylonJS Docs](https://doc.babylonjs.com)
-- [Havok Physics](https://www.havok.com/products/havok-physics-babylonjs)
-- [TypeScript Handbook](https://www.typescriptlang.org/docs/)
-- [Vite Docs](https://vitejs.dev)
-
-## Questions?
-
-See `docs/` folder for:
-- `architecture.md` - System design
-- `asset-guidelines.md` - Asset optimization
-- `onboarding.md` - New contributor guide
+Projet réalisé dans le cadre du cours **3D Game Programming (M1 Informatique)** pour le concours
+**IA Edition**. Modèles, animations et sons intégrés par l'équipe ; animations issues de captures
+de mouvement que nous avons filmées et traitées par IA.
