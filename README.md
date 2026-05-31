@@ -5,7 +5,7 @@
 
 **Jouer en ligne** : https://mamadou-ougailou.github.io/teqball-game/
 
-**Vidéo de présentation** : https://youtu.be/FuFD9C14s_cc
+**Vidéo de présentation** : https://youtu.be/50rCVxkkT00
 
 ---
 

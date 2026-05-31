@@ -253,14 +253,14 @@ const NARRATION_CARDS = [
 
 /* ── LOAD BACKGROUND IMAGES ── */
 async function loadBackgroundImages() {
-  // Files in public/ are served at root path — reference them directly.
-  // Vite copies them as-is to dist/, so /images/* works both in dev and prod.
+  // Use relative paths so the URLs resolve correctly whether the site is served
+  // from the domain root (local dev) or a sub-path (GitHub Pages /teqball-game/).
   const candidates = [
-    '/images/image1.jpg',
-    '/images/image2.jpg',
-    '/images/image3.jpg',
-    '/images/image4.png',
-    '/images/image5.jpg',
+    'images/image1.jpg',
+    'images/image2.jpg',
+    'images/image3.jpg',
+    'images/image4.png',
+    'images/image5.jpg',
   ];
 
   // Filter to only URLs that actually exist (HEAD request)
