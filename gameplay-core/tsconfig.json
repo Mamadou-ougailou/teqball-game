@@ -1,0 +1,15 @@
+{
+  "//": "Standalone, dependency-free type-check. No @babylonjs, no DOM lib. If `npx tsc -p gameplay-core/tsconfig.json` passes, the core is provably view-agnostic.",
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2020"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [],
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["**/*.ts"]
+}

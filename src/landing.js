@@ -1,8 +1,6 @@
 /* ── DEBUG MODE: skip landing page ── */
 const __debugMode = new URLSearchParams(window.location.search).has('debug');
 if (__debugMode) {
-  // Show game screen immediately - without this it stays display:none and
-  // the canvas has zero dimensions, causing Babylon to fail silently.
   const _dbgScreen = document.getElementById('game-screen');
   if (_dbgScreen) _dbgScreen.classList.add('active');
   const _dbgStart = document.getElementById('start-screen');
@@ -21,6 +19,7 @@ if (__debugMode) {
 }
 
 function initLandingPage() {
+
 /* ── CUSTOM CURSOR ── */
 const cursor = document.getElementById('cursor');
 const ring = document.getElementById('cursor-ring');
@@ -195,22 +194,34 @@ function drawBall(ctx, W, H, t, color) {
   ctx.fill();
 }
 
-/* ── INIT MENU BACKDROP (animated curved teqball table + bouncing ball) ── */
-PlaceholderVideo('canvas-menu-bg', {
-  label: '',
-  bgTop: '#060608',
-  bgBot: '#0a0a10',
-  orbColor: 'rgba(200,168,75,0.10)',
-  ballColor: '#c8a84b',
-  particleCount: 45
+/* ── INIT CANVAS PLACEHOLDERS ── */
+PlaceholderVideo('canvas-arena', {
+  label: 'ARÈNES — CLOUD / RAVE / SPACE',
+  bgTop: '#06070a',
+  bgBot: '#0a0810',
+  orbColor: 'rgba(80,120,200,0.12)',
+  ballColor: '#6ab0ff',
+  particleCount: 55
+});
+
+PlaceholderVideo('canvas-char', {
+  label: 'PERSONNAGES & SUPERPOWERS',
+  bgTop: '#090608',
+  bgBot: '#0d090a',
+  orbColor: 'rgba(224,92,42,0.12)',
+  ballColor: '#e05c2a',
+  particleCount: 35
 });
 
 /* ── AMBIENT DRONE (Web Audio API) ── */
 function createAmbientDrone() {
-   const audio = new Audio('audio/intro.mp3');
+   const base = import.meta.env.BASE_URL ?? '/';
+   const audio = new Audio(base + 'audio/intro.mp3');
     audio.loop = true;
     audio.volume = 0.35;
-    audio.play().catch(() => {}); // catch nécessaire (politique navigateur)
+    audio.play().catch(err => {
+      console.warn('[audio] intro play blocked:', err.name, err.message);
+    });
 
     return {
       fadeOut(duration = 1.5) {
@@ -240,20 +251,45 @@ const NARRATION_CARDS = [
 { text: 'TEQBALL', subtext: 'ÉDITION SURRÉALISTE', speed: 85, pause: 2500, isTitle: true },
 ];
 
+/* ── LOAD BACKGROUND IMAGES ── */
+async function loadBackgroundImages() {
+  try {
+    // Vite glob for public assets — must include 'public/' prefix in the pattern
+    // but Vite strips it from the served URL automatically.
+    // During dev: served at /images/*, during build: copied to dist/images/*
+    const imageModules = import.meta.glob([
+      '/public/images/*.jpg',
+      '/public/images/*.jpeg',
+      '/public/images/*.png',
+      '/public/images/*.webp',
+    ], { as: 'url' });
+    const urls = await Promise.all(
+      Object.values(imageModules).map(async (loader) => loader())
+    );
+    return urls.sort();
+  } catch (_) {
+    return [];
+  }
+}
+
 const _wait = ms => new Promise(r => setTimeout(r, ms));
 
 /* ── INTRO NARRATION ── */
-async function showIntroNarration(onOpaque) {
+async function showIntroNarration(onOpaque, preStartedDrone = null) {
   return new Promise(resolve => {
     const screen   = document.getElementById('intro-screen');
     const cardEl   = document.getElementById('intro-card');
     const lineEl   = document.getElementById('intro-line');
     const subEl    = document.getElementById('intro-subline');
+    const bgImgContainer = document.getElementById('intro-bg-images');
 
     let done = false;
-    let drone = null;
+    let drone = preStartedDrone;
+    let backgroundImages = [];
+    let currentImageIndex = 0;
+    let currentImageEl = null;
 
-    try { drone = createAmbientDrone(); } catch (_) {}
+    if (!drone) try { drone = createAmbientDrone(); } catch (_) {}
 
     const finish = () => {
       if (done) return;
@@ -263,6 +299,36 @@ async function showIntroNarration(onOpaque) {
       setTimeout(() => { screen.style.display = 'none'; resolve(); }, 850);
     };
 
+    // Show next background image with fade
+    const showNextImage = async () => {
+      if (!bgImgContainer || backgroundImages.length === 0) return;
+
+      // Hide current image
+      if (currentImageEl) {
+        currentImageEl.classList.remove('active');
+        await _wait(400);
+      }
+
+      // Create new image element
+      const imgUrl = backgroundImages[currentImageIndex % backgroundImages.length];
+      const imgEl = document.createElement('img');
+      imgEl.className = 'intro-bg-img';
+      imgEl.src = imgUrl;
+      bgImgContainer.appendChild(imgEl);
+
+      // Show with fade in
+      requestAnimationFrame(() => {
+        imgEl.classList.add('active');
+      });
+
+      // Remove old images (keep only current)
+      const allImages = Array.from(bgImgContainer.querySelectorAll('img'));
+      allImages.slice(0, -1).forEach(el => el.remove());
+
+      currentImageEl = imgEl;
+      currentImageIndex++;
+    };
+
     // Reveal screen
     screen.style.opacity = '0';
     screen.style.transition = 'opacity 0.85s ease';
@@ -270,11 +336,18 @@ async function showIntroNarration(onOpaque) {
     requestAnimationFrame(() => requestAnimationFrame(() => { screen.style.opacity = '1'; }));
 
     (async () => {
+      // Load background images
+      backgroundImages = await loadBackgroundImages();
+
       await _wait(850);
       if (onOpaque) onOpaque();
 
-      for (const card of NARRATION_CARDS) {
+      for (let i = 0; i < NARRATION_CARDS.length; i++) {
+        const card = NARRATION_CARDS[i];
         if (done) break;
+
+        // Show next image synchronized with card
+        await showNextImage();
 
         // Reset card
         cardEl.className = 'intro-card' + (card.isTitle ? ' title-card' : '');
@@ -320,7 +393,8 @@ async function showIntroNarration(onOpaque) {
 }
 
 /* ── PRE-MATCH COUNTDOWN ── */
-async function showPreMatchCountdown() {
+async function showPreMatchCountdown(setNumber = 1) {
+  if (gameMod) gameMod.freezeGame();
   return new Promise(resolve => {
     const overlay = document.getElementById('prematch-overlay');
     const textEl  = document.getElementById('prematch-text');
@@ -328,12 +402,12 @@ async function showPreMatchCountdown() {
     overlay.classList.add('active');
 
     const steps = [
-      { text: 'ROUND 1', cls: 'round', ms: 1400 },
-      { text: 'PRÊT ?', cls: 'ready', ms: 950 },
+      { text: `SET ${setNumber}`, cls: 'round', ms: 1400 },
+      { text: 'PRÊT ?', cls: 'ready', ms: 950 },
       { text: '3', cls: 'count', ms: 780 },
       { text: '2', cls: 'count', ms: 780 },
       { text: '1', cls: 'count', ms: 780 },
-      { text: 'JOUEZ !', cls: 'go', ms: 950 },
+      { text: 'JOUEZ !', cls: 'go', ms: 950 },
     ];
 
     (async () => {
@@ -352,6 +426,7 @@ async function showPreMatchCountdown() {
       overlay.classList.remove('active');
       textEl.style.opacity = '';
       textEl.style.transition = '';
+      if (gameMod) gameMod.unfreezeGame();
       resolve();
     })();
   });
@@ -367,10 +442,11 @@ let gameStarted = false;
 let mainLoadPromise = null;
 let preloadPromise = null;   // resolves when full scene is ready
 let gameStarting = false;
+let gameMod = null;
 
 /* ── PREFETCH GAME ASSETS ── */
 function prefetchGameAssets() {
-  // Import + compile the TS bundle
+  // Import + compile the TS bundle (absolute path — Vite resolves correctly)
   mainLoadPromise = import('/src/main.ts');
 
   // Add `preloading` so #game-screen is display:block (canvas gets real dimensions)
@@ -378,12 +454,12 @@ function prefetchGameAssets() {
   gameScreen.classList.add('preloading');
 
   // Kick off the full scene preload (Havok init, GLB loading, physics setup…)
-  // while the intro narration plays.  By the time the user clicks Play it's done.
+  // while the intro narration plays. By the time the user clicks Play it's done.
   preloadPromise = mainLoadPromise
     .then(mod => mod.preloadGame())
     .catch(err => {
       console.warn('[preload] background preload failed, will retry on Play:', err);
-      preloadPromise = null;
+      preloadPromise = null; // reset so Play button retries
     });
 }
 
@@ -402,14 +478,20 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', async () => {
     btn.blur();
     const action = btn.dataset.action;
-    if (action === 'play') {
+    if (action === 'howtoplay') {
+      document.getElementById('howtoplay-screen').classList.add('active');
+    } else if (action === 'play') {
       if (gameStarting) return;
-      // Already played once → restart cleanly with the (possibly new) character
-      // by reloading straight back into a fresh match.  Without this the menu
-      // got stuck because gameStarting stayed true and the old P1 was kept.
+      // Already played once → restart via the V2 restartMatch export
       if (gameStarted) {
-        sessionStorage.setItem('teq_autostart', window.selectedCharacterId || 'messi');
-        window.location.reload();
+        if (gameMod && typeof gameMod.restartMatch === 'function') {
+          gameMod.restartMatch();
+          app.style.display = 'none';
+          backBtn.style.display = 'block';
+          document.body.style.cursor = 'default';
+          gameScreen.classList.add('active');
+          await showPreMatchCountdown();
+        }
         return;
       }
       gameStarting = true;
@@ -424,19 +506,19 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       try {
         const mod = await mainLoadPromise;
 
-        // Lock in the menu selection so main() can finish building P1.
-        // Default to Messi if the user never opened Personnages.
+        // ── KEY STEP: tell V2's main.ts which character was selected ──────────
+        // V2 defers P1 character instantiation behind a Promise until this
+        // is called. Defaults to 'messi' if the user never opened Personnages.
         if (typeof mod.confirmCharacterSelection === 'function') {
           mod.confirmCharacterSelection(window.selectedCharacterId || 'messi');
         }
 
+        // Start preload if it hasn't been started or previously failed
         if (!preloadPromise) {
-          // Preload didn't start yet - show loading screen while it runs
-          loadingScreen.classList.add('active');
           preloadPromise = mod.preloadGame();
         }
 
-        // If preload is still in progress, show a lightweight loading indicator
+        // Show loading indicator while preload finishes
         const isReady = await Promise.race([
           preloadPromise.then(() => true),
           Promise.resolve(false),
@@ -446,12 +528,17 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
           await preloadPromise;
         }
 
-        // Scene is fully loaded - switch from invisible preloading to active
+        // Scene is fully loaded — switch from invisible preloading to active
+        loadingScreen.classList.remove('active');
         gameScreen.classList.remove('preloading');
         gameScreen.classList.add('active');
-        mod.startGame();
-        gameStarted = true;
-        loadingScreen.classList.remove('active');
+        gameMod = mod;
+        if (gameStarted) {
+          mod.restartMatch();
+        } else {
+          mod.startGame();
+          gameStarted = true;
+        }
       } catch (err) {
         gameScreen.classList.remove('preloading');
         gameScreen.classList.add('active');
@@ -465,8 +552,6 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
     } else if (action === 'characters') {
       document.getElementById('character-select-screen').classList.add('active');
       showCharacterModel(window.selectedCharacterId || 'messi');
-    } else if (action === 'controls') {
-      document.getElementById('controls-screen').classList.add('active');
     } else {
       showTransition(btn.textContent.trim().split('\n').pop().trim().toUpperCase(), () => {
         setTimeout(() => {
@@ -483,6 +568,11 @@ const startBtn = document.getElementById('btn-start-experience');
 
 if (startBtn) {
   startBtn.addEventListener('click', async () => {
+    // Start audio FIRST — must happen synchronously within the user gesture
+    // before any dynamic import() which can cause the autoplay token to expire.
+    let _earlyDrone = null;
+    try { _earlyDrone = createAmbientDrone(); } catch (_) {}
+
     // 1. Hide start screen
     startScreen.style.opacity = '0';
     setTimeout(() => startScreen.style.display = 'none', 1000);
@@ -490,11 +580,11 @@ if (startBtn) {
     // 2. Start prefetching assets in background during narration
     prefetchGameAssets();
 
-    // 3. Play narration
-    await showIntroNarration();
+    // 3. Play narration (pass the already-started drone)
+    await showIntroNarration(null, _earlyDrone);
 
     // 4. Show menu
-    app.style.display = 'block';
+    app.style.display = 'grid';
     app.style.opacity = '0';
     app.style.transition = 'opacity 1s ease';
     
@@ -510,23 +600,31 @@ if (startBtn) {
 }
 
 /* ── BACK TO MENU ── */
-backBtn.addEventListener('click', () => {
+function returnToMenu() {
+  if (gameMod) gameMod.freezeGame();
   showTransition('MENU', () => {
     gameScreen.classList.remove('active');
     backBtn.style.display = 'none';
-    app.style.display = 'block';
+    app.style.display = 'grid';
     document.body.style.cursor = 'none';
-    gameStarting = false; // allow Play to fire again from the menu
-    setTimeout(hideTransition, 200);
+    gameStarting = false;
+    setTimeout(() => {
+      window.dispatchEvent(new Event('resize'));
+      hideTransition();
+    }, 100);
   });
-});
+}
 
-/* ── CONTROLS SCREEN BACK ── */
-document.getElementById('controls-back-btn')?.addEventListener('click', () => {
-  document.getElementById('controls-screen').classList.remove('active');
+backBtn.addEventListener('click', returnToMenu);
+
+document.addEventListener('game:returnToMenu', returnToMenu);
+
+document.addEventListener('game:showSetCountdown', (e) => {
+  showPreMatchCountdown(e.detail.setNumber);
 });
 
 /* ── CHARACTER SELECT ── */
+// V2 character roster (Messi + Maradona with superpower descriptions)
 const charactersData = [
   {
     id: 'messi',
@@ -542,7 +640,7 @@ const charactersData = [
     name: 'Maradona',
     subtitle: 'Moins de puissance, plus de finesse',
     power: 'CHAOS CURVE',
-    desc: 'Dès que la balle rebondit sur la table adverse, sa trajectoire repart violemment dans la direction opposée — impossible à lire et à renvoyer. Le changement ne se produit qu\'après le rebond sur la table, jamais avant.',
+    desc: 'Dès que la balle rebondit sur la table adverse, sa trajectoire repart violemment dans la direction opposée — impossible à lire et à renvoyer.',
     meta: 'Touche F · gagnez 2 points d\'affilée pour la recharger',
     stats: { speed: 85, jump: 30, power: 100, spin: 95 }
   }
@@ -604,14 +702,12 @@ document.getElementById('cs-back-btn')?.addEventListener('click', () => {
   document.getElementById('character-select-screen').classList.remove('active');
 });
 
-initCharacterSelect();
+/* ── HOW TO PLAY SCREEN ── */
+document.getElementById('htp-back-btn')?.addEventListener('click', () => {
+  document.getElementById('howtoplay-screen').classList.remove('active');
+});
 
 /* ── CHARACTER PREVIEW (static T-pose image) ── */
-// Shows a PNG of each character in T-pose.  Drop the images at:
-//   public/models/Messi.png   and   public/models/Maradona.png
-// (served at /models/<File>.png).  Paths are case-sensitive on most servers,
-// so these must match the actual filenames exactly.  If an image is missing the
-// styled placeholder is shown instead, so the menu never looks broken.
 const CHAR_IMAGE_URL = {
   messi: 'models/Messi.png',
   maradona: 'models/Maradona.png',
@@ -635,9 +731,6 @@ function showCharacterModel(charId) {
 }
 
 /* ── AUTO-RESTART BOOT PATH ── */
-// Returning to the menu and pressing Play after a finished game reloads the page
-// with this flag set, so we boot straight into a fresh match with the chosen
-// (possibly new) character — bypassing the intro.
 try {
   const __autostart = sessionStorage.getItem('teq_autostart');
   if (__autostart) {
@@ -652,4 +745,7 @@ try {
     if (_playBtn) _playBtn.click();
   }
 } catch (_) {}
+
+initCharacterSelect();
+
 } // ← end initLandingPage()

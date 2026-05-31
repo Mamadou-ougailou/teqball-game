@@ -6775,6 +6775,37 @@ export async function preloadGame(): Promise<void> {
  * Starts the render loop after preloadGame() has completed.
  * Called by landing.js the instant the user clicks Play.
  */
+// ── Compatibility exports for V1 landing.js ──────────────────────────────────
+// These are called by landing.js (V1 shell) to control the game after the
+// scene is loaded.  V2 does not have a global _gameFrozen toggle; we
+// repurpose pointFreezeActive so input & physics are suppressed while the
+// menu is shown (e.g. user pressed ← Menu).
+
+let _menuFreezeActive = false;
+
+export function freezeGame(): void {
+  _menuFreezeActive = true;
+  pointFreezeActive = true;
+}
+
+export function unfreezeGame(): void {
+  _menuFreezeActive = false;
+  pointFreezeActive = false;
+}
+
+export function restartMatch(): void {
+  // clearPointResultAnimations is inner-scoped; emit the bus event instead
+  // so the listener registered inside main() handles the full reset.
+  EventBus.emit('match:restart', undefined);
+  _menuFreezeActive = false;
+  pointFreezeActive = false;
+}
+
+/** No-op shim: V2 has no background music manager. */
+export function stopMusic(): void {
+  // intentionally empty — V2 has no MusicManager
+}
+
 export function startGame(): void {
   if (!_babylonEngine || !gameScene) {
     throw new Error('startGame() called before preloadGame() completed');

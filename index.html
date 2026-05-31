@@ -8,7 +8,7 @@
      Must load before any other script. Relative path = works on a sub-path too. -->
 <script src="coi-serviceworker.js"></script>
 <link rel="icon" type="image/svg+xml" href="/teqball-icon.svg" />
-<title>TEQBALL - Surrealistic</title>
+<title>TEQBALL — Surrealistic</title>
 <link rel="stylesheet" href="/src/landing.css" />
 </head>
 <body>
@@ -22,6 +22,7 @@
 
 <!-- ── INTRO NARRATION SCREEN ── -->
 <div id="intro-screen">
+  <div id="intro-bg-images"></div>
   <div class="intro-rule"></div>
   <div id="intro-card">
     <div id="intro-line"></div>
@@ -39,11 +40,27 @@
 <!-- ── LANDING PAGE (hidden by default) ── -->
 <div id="app" style="display: none;">
 
+  <!-- VIDEO PANEL -->
+  <div id="video-panel">
+    <div class="video-slots">
+
+      <div class="video-slot" id="slot-arena">
+        <canvas id="canvas-arena"></canvas>
+        <div class="slot-label">Arènes surréalistes</div>
+        <div class="slot-tag">Preview</div>
+      </div>
+
+      <div class="video-slot" id="slot-char">
+        <canvas id="canvas-char"></canvas>
+        <div class="slot-label">Personnages &amp; Superpouvoirs</div>
+        <div class="slot-tag">Preview</div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- MENU PANEL -->
   <div id="menu-panel">
-
-    <!-- Ambient animated teqball backdrop (curved table + bouncing ball) -->
-    <canvas id="canvas-menu-bg"></canvas>
 
     <div class="logo-block">
       <div class="logo-eyebrow">Babylonjs · Web Game</div>
@@ -70,15 +87,21 @@
           </button>
         </li>
         <li class="nav-item">
-          <button class="nav-btn" data-action="controls">
+          <button class="nav-btn" data-action="howtoplay">
             <span class="nav-num">03</span>
-            Commandes
+            Comment Jouer
             <span class="nav-arrow">→</span>
           </button>
         </li>
       </ul>
     </nav>
 
+    <div class="bottom-bar">
+      <div class="version-tag">v2.0.0 — Gameplay Build</div>
+      <div class="controls-hint">
+        <kbd>W A S D</kbd> ou <kbd>↑ ← ↓ →</kbd> Mouvement &nbsp; <kbd>ESPACE</kbd> Tir/Service &nbsp; <kbd>F</kbd> Superpower &nbsp; <kbd>ÉCHAP</kbd> Menu
+      </div>
+    </div>
 
   </div>
 
@@ -89,7 +112,7 @@
   <canvas id="renderCanvas"></canvas>
   <div id="loading-screen">
     <div class="loading-spinner"></div>
-    <p>Chargement du Teqball surréaliste...</p>
+    <p>Initializing Surrealistic Teqball...</p>
   </div>
   <!-- ── PRE-MATCH COUNTDOWN ── -->
   <div id="prematch-overlay">
@@ -98,36 +121,75 @@
   <button class="back-btn" id="back-btn">← Menu</button>
 </div>
 
-<!-- ── CONTROLS / HOW TO PLAY SCREEN ── -->
-<div id="controls-screen">
-  <div class="cs-header">
-    <button class="cs-back-btn" id="controls-back-btn">← Retour</button>
-    <h2>COMMANDES</h2>
+<!-- ── HOW TO PLAY SCREEN ── -->
+<div id="howtoplay-screen">
+  <div class="htp-header">
+    <button class="htp-back-btn" id="htp-back-btn">← Retour</button>
+    <h2>COMMENT JOUER</h2>
   </div>
-  <div class="controls-content">
-    <div class="controls-section">
-      <h3>Déplacement</h3>
-      <div class="ctrl-row"><span class="ctrl-keys"><kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> / <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span><span class="ctrl-desc">Se déplacer sur le terrain</span></div>
+  <div class="htp-content">
+    <div class="htp-section">
+      <h3>CONTRÔLES</h3>
+      <div class="htp-controls">
+        <div class="control-group">
+          <div class="control-key">W/Z ou ↑</div>
+          <span>Avancer (vers la caméra)</span>
+        </div>
+        <div class="control-group">
+          <div class="control-key">S ou ↓</div>
+          <span>Reculer (loin de la caméra)</span>
+        </div>
+        <div class="control-group">
+          <div class="control-key">A/Q ou ←</div>
+          <span>Gauche</span>
+        </div>
+        <div class="control-group">
+          <div class="control-key">D ou →</div>
+          <span>Droite</span>
+        </div>
+        <div class="control-group">
+          <div class="control-key">ESPACE</div>
+          <span>Tirer / Servir</span>
+        </div>
+        <div class="control-group">
+          <div class="control-key">Q → (avant service)</div>
+          <span>Changer de type de service</span>
+        </div>
+        <div class="control-group">
+          <div class="control-key">F</div>
+          <span>Superpouvoir (quand PRÊT)</span>
+        </div>
+        <div class="control-group">
+          <div class="control-key">ÉCHAP</div>
+          <span>Retour au menu</span>
+        </div>
+      </div>
     </div>
-    <div class="controls-section">
-      <h3>Frappe</h3>
-      <div class="ctrl-row"><span class="ctrl-keys"><kbd>Espace</kbd></span><span class="ctrl-desc">Frapper / servir la balle</span></div>
-      <div class="ctrl-row"><span class="ctrl-keys"><kbd>Espace</kbd> <kbd>Espace</kbd></span><span class="ctrl-desc">Double appui = tir puissant</span></div>
-      <div class="ctrl-row"><span class="ctrl-keys">Direction + <kbd>Espace</kbd></span><span class="ctrl-desc">Viser à gauche / à droite</span></div>
+
+    <div class="htp-section">
+      <h3>RÈGLES DU TEQBALL</h3>
+      <ul class="htp-rules">
+        <li data-num="01">La balle doit passer par-dessus le filet courbe</li>
+        <li data-num="02">Maximum 3 touches par équipe avant de passer</li>
+        <li data-num="03">La balle ne peut pas rebondir 2x du même côté</li>
+        <li data-num="04">Marquez des points quand l'adversaire ne renvoie pas</li>
+        <li data-num="05">Gagnez un set en atteignant la première le nombre de points requis</li>
+        <li data-num="06">Gagnez le match en gagnant 2 sets sur 3</li>
+      </ul>
     </div>
-    <div class="controls-section">
-      <h3>Service</h3>
-      <div class="ctrl-row"><span class="ctrl-keys"><kbd>Q</kbd></span><span class="ctrl-desc">Changer de type de service (avant de servir)</span></div>
-      <div class="ctrl-row"><span class="ctrl-keys"><kbd>R</kbd></span><span class="ctrl-desc">Revenir au service (relancer l'échange à zéro)</span></div>
-    </div>
-    <div class="controls-section">
-      <h3>Superpouvoir</h3>
-      <div class="ctrl-row"><span class="ctrl-keys"><kbd>F</kbd></span><span class="ctrl-desc">Déclencher le superpouvoir (quand il est PRÊT)</span></div>
-      <div class="ctrl-row ctrl-note"><span class="ctrl-desc">Gagnez 2 points d'affilée pour recharger votre superpouvoir. Une charge est aussi offerte au début de chaque set.</span></div>
-    </div>
-    <div class="controls-section">
-      <h3>But du jeu</h3>
-      <div class="ctrl-row ctrl-note"><span class="ctrl-desc">Renvoyez la balle sur la table adverse. Variez vos angles et utilisez les tirs puissants en diagonale pour prendre l'IA à contre-pied et marquer.</span></div>
+
+    <div class="htp-section">
+      <h3>SUPERPOUVOIRS</h3>
+      <div class="htp-powers">
+        <div class="power-item">
+          <div class="power-name">SUPERCHARGE (Messi)</div>
+          <span>Déclenche une frappe enflammée inarrêtable. Gagnez 2 points d'affilée pour recharger.</span>
+        </div>
+        <div class="power-item">
+          <div class="power-name">CHAOS CURVE (Maradona)</div>
+          <span>La balle change violemment de trajectoire après son rebond sur la table adverse.</span>
+        </div>
+      </div>
     </div>
   </div>
 </div>
