@@ -6775,17 +6775,41 @@ export async function preloadGame(): Promise<void> {
  * Starts the render loop after preloadGame() has completed.
  * Called by landing.js the instant the user clicks Play.
  */
-// ── Compatibility exports for V1 landing.js ──────────────────────────────────
-// These are called by landing.js (V1 shell) to control the game after the
-// scene is loaded.  V2 does not have a global _gameFrozen toggle; we
-// repurpose pointFreezeActive so input & physics are suppressed while the
-// menu is shown (e.g. user pressed ← Menu).
+// ── Pause & compatibility exports ────────────────────────────────────────────
 
+let _isPaused = false;
+let _renderLoopStarted = false;
 let _menuFreezeActive = false;
+
+/** Show/hide the #pause-overlay DOM element */
+function _setPauseOverlay(active: boolean): void {
+  const el = document.getElementById('pause-overlay');
+  if (!el) return;
+  if (active) el.classList.add('active');
+  else el.classList.remove('active');
+}
+
+/** Toggle pause on/off. Called by ESC key and the floating ⏸ button. */
+export function togglePause(): void {
+  if (_menuFreezeActive) return; // menu is open — don't interfere
+  if (_isPaused) {
+    _isPaused = false;
+    pointFreezeActive = false;
+    _setPauseOverlay(false);
+    EventBus.emit('game:resume', undefined);
+  } else {
+    _isPaused = true;
+    pointFreezeActive = true;
+    _setPauseOverlay(true);
+    EventBus.emit('game:pause', undefined);
+  }
+}
 
 export function freezeGame(): void {
   _menuFreezeActive = true;
+  _isPaused = false; // clear any in-game pause so the menu takes over
   pointFreezeActive = true;
+  _setPauseOverlay(false);
 }
 
 export function unfreezeGame(): void {
@@ -6794,11 +6818,11 @@ export function unfreezeGame(): void {
 }
 
 export function restartMatch(): void {
-  // clearPointResultAnimations is inner-scoped; emit the bus event instead
-  // so the listener registered inside main() handles the full reset.
   EventBus.emit('match:restart', undefined);
   _menuFreezeActive = false;
+  _isPaused = false;
   pointFreezeActive = false;
+  _setPauseOverlay(false);
 }
 
 /** No-op shim: V2 has no background music manager. */
@@ -6810,8 +6834,53 @@ export function startGame(): void {
   if (!_babylonEngine || !gameScene) {
     throw new Error('startGame() called before preloadGame() completed');
   }
+  if (_renderLoopStarted) return;
+  _renderLoopStarted = true;
+
   _babylonEngine.render(gameScene);
   window.addEventListener('resize', () => _babylonEngine!.getNativeEngine().resize());
+
+  // ── ESC → toggle pause ───────────────────────────────────────────────────
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !_menuFreezeActive) {
+      togglePause();
+    }
+  });
+
+  // ── Floating ⏸ button ────────────────────────────────────────────────────
+  const pauseBtn = document.getElementById('btn-pause-ingame');
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', () => {
+      if (!_menuFreezeActive) togglePause();
+    });
+  }
+
+  // ── #btn-resume → resume ─────────────────────────────────────────────────
+  const resumeBtn = document.getElementById('btn-resume');
+  if (resumeBtn) {
+    resumeBtn.addEventListener('click', () => {
+      if (_isPaused) togglePause();
+    });
+  }
+
+  // ── #btn-pause-menu → return to menu (same as ← Menu back-btn) ───────────
+  const pauseMenuBtn = document.getElementById('btn-pause-menu');
+  if (pauseMenuBtn) {
+    pauseMenuBtn.addEventListener('click', () => {
+      _setPauseOverlay(false);
+      _isPaused = false;
+      pointFreezeActive = false;
+      // Trigger landing.js's returnToMenu via a DOM event
+      document.dispatchEvent(new CustomEvent('game:returnToMenu'));
+    });
+  }
+
+  // ── game:resume bus listener (for external callers) ──────────────────────
+  EventBus.on('game:resume', () => {
+    if (_isPaused) {
+      _isPaused = false;
+      pointFreezeActive = false;
+      _setPauseOverlay(false);
+    }
+  });
 }
-
-

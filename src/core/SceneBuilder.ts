@@ -2,7 +2,8 @@ import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
-import { Color3 } from '@babylonjs/core/Maths/math.color';
+import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
+import { GlowLayer } from '@babylonjs/core/Layers/glowLayer';
 import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import HavokPhysics from '@babylonjs/havok';
 import { HavokPlugin } from '@babylonjs/core/Physics/v2/Plugins/havokPlugin';
@@ -22,40 +23,35 @@ export class SceneBuilder {
     // Create game scene
     const scene = new Scene(engine.getNativeEngine());
     scene.collisionsEnabled = true;
+    scene.clearColor = new Color4(0.10, 0.10, 0.14, 1); // Dark-charcoal arena feel (V1)
 
-    // Setup camera
+    // Setup camera — side view, close enough to read the game clearly (V1 style)
     const camera = new ArcRotateCamera(
       'camera',
-      -Math.PI / 2,
-      Math.PI / 3,
-      20 * SCALE,
-      new Vector3(0, 0, 0),
+      0,
+      Math.PI / 2.8,
+      9 * SCALE,
+      new Vector3(0, SCALE * 0.9, 0),
       scene
     );
-    camera.attachControl(canvas, true);
-    camera.wheelPrecision = 50;
-    // Arrow keys are reserved for player controls; keep mouse/touch camera input.
-    camera.keysUp = [];
-    camera.keysDown = [];
-    camera.keysLeft = [];
-    camera.keysRight = [];
+    // Camera is fixed — user inputs disabled so the view stays locked (V1 style)
+    camera.inputs.clear();
 
-    // Setup lighting - increase intensity for better visibility
+    // Bright neutral lighting — clear visibility of players and ball (V1 style)
     const light = new HemisphericLight('light', new Vector3(0, 1, 0), scene);
-    light.intensity = 1.5;
-    light.diffuse = new Color3(0.5, 0.3, 0.9); // Surreal purple/blue
-    light.groundColor = new Color3(0.1, 0.0, 0.2);
+    light.intensity = 2.2;
+    light.diffuse     = new Color3(1.0, 1.0, 1.0);  // Pure white — neutral, no colour cast
+    light.groundColor = new Color3(0.45, 0.45, 0.50); // Warm grey fill from below
 
-    if (!options?.debug) {
-      const pipeline = new DefaultRenderingPipeline("default", true, scene, [camera]);
-      pipeline.chromaticAberration.aberrationAmount = 25;
-      pipeline.chromaticAberration.radialIntensity = 1;
-      pipeline.chromaticAberrationEnabled = true;
-      // Bloom disabled: it made the bright white court lines and the scoreboard
-      // text glow.  The ball-fire effect uses its own GlowLayer, so it is
-      // unaffected by turning bloom off here.
-      pipeline.bloomEnabled = false;
-    }
+    // Subtle glow — keeps neon emissive colors punchy without darkening the scene (V1)
+    const glowLayer = new GlowLayer('glow', scene);
+    glowLayer.intensity = 0.5;
+
+    const pipeline = new DefaultRenderingPipeline('default', true, scene, [camera]);
+    pipeline.chromaticAberrationEnabled = false;
+    pipeline.bloomEnabled = true;
+    pipeline.bloomThreshold = 0.82;
+    pipeline.bloomWeight    = 0.20;
 
     // Initialize physics engine
     const havokInstance = await HavokPhysics({

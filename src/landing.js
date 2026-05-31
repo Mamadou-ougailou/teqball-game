@@ -253,23 +253,25 @@ const NARRATION_CARDS = [
 
 /* ── LOAD BACKGROUND IMAGES ── */
 async function loadBackgroundImages() {
-  try {
-    // Vite glob for public assets — must include 'public/' prefix in the pattern
-    // but Vite strips it from the served URL automatically.
-    // During dev: served at /images/*, during build: copied to dist/images/*
-    const imageModules = import.meta.glob([
-      '/public/images/*.jpg',
-      '/public/images/*.jpeg',
-      '/public/images/*.png',
-      '/public/images/*.webp',
-    ], { as: 'url' });
-    const urls = await Promise.all(
-      Object.values(imageModules).map(async (loader) => loader())
-    );
-    return urls.sort();
-  } catch (_) {
-    return [];
-  }
+  // Files in public/ are served at root path — reference them directly.
+  // Vite copies them as-is to dist/, so /images/* works both in dev and prod.
+  const candidates = [
+    '/images/image1.jpg',
+    '/images/image2.jpg',
+    '/images/image3.jpg',
+    '/images/image4.png',
+    '/images/image5.jpg',
+  ];
+
+  // Filter to only URLs that actually exist (HEAD request)
+  const valid = await Promise.all(
+    candidates.map(url =>
+      fetch(url, { method: 'HEAD' })
+        .then(r => r.ok ? url : null)
+        .catch(() => null)
+    )
+  );
+  return valid.filter(Boolean);
 }
 
 const _wait = ms => new Promise(r => setTimeout(r, ms));
