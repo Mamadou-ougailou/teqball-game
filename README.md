@@ -1,195 +1,170 @@
-# ⚽ Teqball — Surrealistic Edition
+# TEQBALL (AI Edition)
 
-> Un jeu de teqball en 3D dans le navigateur, où vous affrontez **Howard**, un adversaire
-> entièrement piloté par une intelligence artificielle.
-> Développé avec **BabylonJS**, **TypeScript** et **Vite** (physique **Havok**).
+> Jeu de teqball 3D jouable dans le navigateur, développé avec **BabylonJS 6**, **Havok Physics v2** et **TypeScript**.
+> Un humain contre une IA à prédiction balistique. Physique réelle, aucun plugin, aucune installation.
 
----
+**Jouer en ligne** : https://mamadou-ougailou.github.io/teqball-game/
 
-## 🎮 Jouer maintenant
-
-- **🌐 Jeu en ligne (hébergé)** : <!-- TODO : coller ici l'URL GitHub Pages / itch.io --> _à compléter_
-- **▶️ Vidéo de présentation YouTube** : <!-- TODO : coller ici le lien de la vidéo --> _à venir_
-
-> 💡 **Le jeu se joue entièrement au clavier.** Pas besoin de souris, ni de manette, ni de
-> matériel particulier — parfait pour le tester sur un ordinateur portable.
+**Vidéo de présentation** : https://youtu.be/FuFD9C14s_cc
 
 ---
 
-## 🧠 Pourquoi c'est dans le thème « IA Edition »
+## Présentation rapide
 
-L'IA est au cœur du projet, et de **deux** manières concrètes :
+Le jeu se teste **sur un simple ordinateur portable**, sans matériel particulier.
 
-### 1. Un adversaire piloté par une IA — Howard
+1. Ouvrez le lien ci-dessus dans **Chrome, Edge ou Brave** (navigateur Chrome requis pour Havok / `SharedArrayBuffer`).
+2. Cliquez sur **« Commencer l'expérience »** → une courte narration se joue (vous pouvez la regarder, elle pose le thème).
+3. Dans le menu, **Jouer** lance directement un match contre l'IA. Pas de niveau à débloquer : vous êtes dans le jeu immédiatement.
+4. Optionnel : **Personnages** pour choisir votre joueur (3 disponibles, stats et superpouvoir différents), **Comment jouer** pour le rappel des touches.
 
-Howard, votre adversaire, **ne reçoit aucune entrée humaine** : il est intégralement contrôlé
-par une IA qui, à chaque image (frame) :
-
-1. **Prédit la trajectoire de la balle** et son point de chute sur son côté de la table
-   (prédiction physique / balistique de la balle).
-2. **Se déplace vers le point d'interception**, case par case sur une grille qui découpe le
-   terrain, en jouant l'animation de course correspondant à sa direction.
-3. **Choisit où renvoyer la balle** : la zone cible sur la table adverse est tirée par
-   **échantillonnage pondéré**. L'IA privilégie les coins et les diagonales pour varier ses
-   angles et vous prendre à contre-pied, plutôt que de renvoyer bêtement au centre.
-4. **Sélectionne l'animation de frappe ou de service** la mieux adaptée à la situation.
-
-C'est une **IA comportementale déterministe** (heuristiques + prédiction physique), pas un
-réseau de neurones : elle reste lisible, débogable et rejouable — un choix assumé pour garder
-la maîtrise du gameplay.
-
-### 2. Des animations générées par capture de mouvement assistée par IA
-
-Toutes les animations des joueurs ont été produites grâce à une **plateforme de capture de
-mouvement par IA** : nous avons **filmé nos propres vidéos** (gestes de teqball, services,
-réceptions, frappes…) puis extrait les squelettes / mouvements qui nous intéressaient pour les
-appliquer à nos modèles 3D. L'IA n'est donc pas seulement *dans* le jeu : elle a aussi servi à
-*fabriquer* le jeu.
+> Le match démarre seul, l'IA sert et joue toute seule. Vous n'avez qu'à vous déplacer et frapper.
 
 ---
 
-## 🕹️ Commandes
+## Matériel & contrôles à lire avant de jouer
 
-Le déplacement est volontairement placé sur les **flèches directionnelles** : elles sont
-identiques sur **AZERTY et QWERTY**, donc aucun souci de disposition de clavier pour les
-testeurs.
+| Élément | Détail |
+| --- | --- |
+| **Souris / trackpad** | Recommandée **pour le menu uniquement** (curseur personnalisé). Le match en lui-même se joue **100 % au clavier**. |
+| **Clavier** | **AZERTY et QWERTY supportés automatiquement**  aucune config. Le code accepte simultanément `Z/Q` (AZERTY) et `W/A` (QWERTY). |
+| **Manette** | Non nécessaire (et non supportée pour l'instant). |
+| **Navigateur** | Chromium (Chrome / Edge / Brave). Firefox/Safari peuvent bloquer `SharedArrayBuffer`. |
 
-| Action | Touche |
-|---|---|
-| Se déplacer | **↑ ↓ ← →** (flèches directionnelles) |
-| Frapper / Servir | **Espace** |
-| Tir puissant | **Espace × 2** (double appui) |
-| Viser à gauche / droite | **← ou →** maintenue **+ Espace** |
-| Changer de type de service | **Q** (avant de servir) |
-| Revenir au service / relancer l'échange | **R** |
-| Déclencher le superpouvoir | **F** (quand il est PRÊT) |
+### Commandes en match (Joueur 1)
 
-> 🖱️ **Pas de souris ni de manette nécessaires.**
+| Action | Touches |
+| --- | --- |
+| Se déplacer | `Z Q S D` (AZERTY) · `W A S D` (QWERTY) · **Flèches** |
+| Servir / Frapper | `Espace` |
+| Superpouvoir | `Q` (AZERTY) / `A` (QWERTY) |
+| Pause | `Échap` |
+| Retour menu | bouton **Retour** en haut |
 
----
-
-## 🎯 But du jeu
-
-Renvoyez la balle sur la table adverse sans la laisser rebondir deux fois de votre côté.
-Variez vos angles et utilisez les **tirs puissants en diagonale** pour prendre l'IA à
-contre-pied et marquer le point.
-
-### Personnages & superpouvoirs
-
-Vous choisissez votre joueur en début de partie. Chacun a ses stats (vitesse, saut, puissance,
-effet) et un **superpouvoir** :
-
-- **Messi** — *SUPERCHARGE*
-- **Maradona** — *CHAOS CURVE*
-
-Le superpouvoir se déclenche avec **F** lorsqu'il est chargé : gagnez **2 points d'affilée**
-pour le recharger (une charge est aussi offerte au début de chaque set).
-
-Face à vous : **Howard**, l'adversaire IA.
+Le **Joueur 2 est entièrement géré par l'IA** : il sert et joue automatiquement.
 
 ---
 
-## 🧪 Tester facilement (note pour le jury)
+## Le jeu & ses règles
 
-- Au lancement, un écran **« Commencer l'expérience »** débloque l'audio, puis une courte
-  narration pose le contexte avant le match.
-- Le menu permet d'accéder directement à **Jouer**, **Personnages** et **Commandes**.
-- Une partie démarre vite ; le premier set est accessible pour prendre le jeu en main.
+Le teqball est un **vrai sport de compétition** : deux joueurs face à face autour d'une table incurvée, comme un croisement entre le foot et le tennis de table. Cette version applique le **règlement officiel en simple** :
 
----
+- **3 touches maximum** par joueur avant de renvoyer la balle dans le camp adverse.
+- La balle doit **rebondir côté adverse** ; un rebond de votre côté est une faute.
+- **Double rebond** du même côté → point pour le dernier joueur à avoir touché.
+- Balle au **sol sans toucher la table** → point pour l'adversaire.
+- **Sets en 12 points**, victoire à **2 points d'écart**, match au **meilleur des 3 sets**.
 
-## 🛠️ Galères & décisions de conception
-
-La partie dont on est fiers… et celle qui nous a fait le plus suer. Quelques-uns de nos vrais
-chantiers :
-
-### 1. Trouver les bonnes animations
-Les animations de teqball ne courent pas les rues. Nous avons fini par **tourner nous-mêmes des
-vidéos** de gestes, puis par passer par une **plateforme de capture de mouvement par IA** pour
-en extraire les mouvements et ne garder que ceux qui collaient au jeu (service, réception,
-frappes, déplacements). Long, itératif, mais c'est ce qui donne sa personnalité au jeu.
-
-### 2. Synchroniser la balle avec le squelette du modèle 3D
-Le vrai casse-tête : faire en sorte que la balle soit touchée **au bon moment** par le bon os du
-joueur. Une animation, c'est une suite de frames ; le contact réel avec la balle n'a lieu que
-sur **quelques frames précises**. Nous avons donc dû, pour chaque animation, repérer le **nombre
-de frames** et la **fenêtre de frames** pendant laquelle le joueur exécute son geste de contact,
-afin de déclencher la collision et l'impulsion de la balle pile à cet instant. Sans ça, la balle
-partait avant ou après le geste, et tout paraissait faux.
-
-### 3. Gérer l'agent IA qui anime Howard
-Faire jouer une IA au teqball de façon **crédible mais battable** a demandé beaucoup de réglages :
-prédiction de la trajectoire, repositionnement défensif, choix des zones de renvoi, fenêtres de
-réaction… Trouver l'équilibre entre une IA qui « triche » (toujours au bon endroit) et une IA
-trop molle a été un travail d'ajustement permanent.
+Toute la logique des règles vit dans `src/gameplay/RuleEngine.ts`, écrit en **fonctions pures sans dépendance BabylonJS** donc testable unitairement (voir `tests/`).
 
 ---
 
-## ⚙️ Stack & défis techniques
+## Pourquoi ce jeu respecte le thème « IA Edition »
 
-- **Moteur 3D** : BabylonJS 6
-- **Langage** : TypeScript (strict)
-- **Bundler / dev server** : Vite
-- **Physique** : Havok (WASM) — nécessite l'isolation cross-origin (en-têtes COOP/COEP côté serveur)
-- **Audio** : Howler
-- **Modèles & animations** : `.glb` (capture de mouvement assistée par IA)
+Le thème de l'édition est l'**IA face à l'humain**. Nous l'avons pris au pied de la lettre **et** au sens figuré :
 
-Défis techniques notables : pipeline d'animation par capture de mouvement IA, synchronisation
-fine balle ↔ squelette par fenêtres de frames, et conception d'une IA adversaire comportementale
-(prédiction balistique + déplacement sur grille + placement de balle pondéré).
+1. **Un adversaire IA, pas un script.** L'IA ne suit aucune trajectoire pré-enregistrée. Elle calcule en direct, à chaque frame, une **prédiction balistique** de la balle et décide où se placer et comment frapper. Sa difficulté est *émergente* : elle réagit à la physique réelle, exactement comme un humain.
+
+2. **Une narration assumée.** Avant chaque partie, une intro typée pose le décor : *« Dans un monde où l'IA a tout conquis… il reste un terrain où la machine n'a pas gagné. »* Le teqball y devient le dernier sport où **le corps parle avant l'algorithme** un geste, un timing, un réflexe que le code ne peut pas vraiment imiter.
+
+3. **L'IA ne triche pas.** Elle n'a pas accès à vos intentions : elle ne voit que la physique de la balle, comme vous. C'est ce qui rend une victoire humaine satisfaisante.
 
 ---
 
-## 👥 L'équipe
+## Le système d'IA en détail
 
-- **Mamadou Diallo Ougailou**
-- **Stevenson Jules**
-- **Bierhoff Theolien**
+`src/ai/AIController.ts` fonctionne en trois couches :
 
-<!-- TODO (optionnel mais apprécié du jury) : préciser qui a fait quoi
-     (gameplay / IA / animation / 3D / UI / audio…) -->
+1. **Prédiction balistique** à chaque frappe, l'IA simule la parabole complète de la balle (gravité, vitesse initiale, hauteur de table) pour estimer **où** et **quand** elle retombera dans son camp. Le résultat est stocké dans une `ReceptionForecast`.
+2. **Planification du déplacement** `computeAIMovement()` dirige l'IA vers le point d'interception, avec un *clamp* qui l'empêche de franchir le filet (même contrainte que le joueur humain).
+3. **Choix de l'action** selon la hauteur de balle, la distance et la phase de l'échange, l'IA choisit tête / genou / ciseau et met l'action en file, exécutée par `ActionSystem` quand les conditions spatiales sont réunies.
 
 ---
 
-## 💻 Lancer le projet en local
+## Architecture
+
+Découpage en modules à responsabilité unique :
+
+```
+src/
+├── config/      GameConfig.ts toutes les constantes en un seul endroit
+├── core/        Engine, SceneBuilder, AssetManager, EventBus, GameLoop
+├── entities/    Ball, Character, Arena, CurvedTable, PlayerSetup
+├── gameplay/    MatchManager, RallyManager, ServeManager, RuleEngine,
+│                ActionSystem, PlayerLocomotion, SuperpowerSystem, abilities/
+├── ai/          AIController prédiction balistique + planification
+├── animation/   AnimationSystem, IKController retargeting squelette
+├── systems/     InputManager (AZERTY/QWERTY), CameraManager, PhysicsWorld, BallPhysics
+├── ui/          HUD, PointAnnouncement, UIManager overlays DOM
+├── audio/       AudioSystem, MusicManager
+├── vfx/         ParticleLibrary, ShaderLibrary, TrailManager
+├── landing.js   Menu, narration d'intro, sélection perso, transitions
+└── main.ts      Orchestrateur boucle de rendu, câblage des systèmes
+```
+
+**Deux décisions dont nous sommes contents :**
+
+- **EventBus pour découpler l'UI.** Le gameplay émet des événements typés (`match:pointScored`, `match:setEnd`, `match:end`). Le HUD et les overlays s'y abonnent sans aucune importation circulaire entre gameplay et présentation.
+- **Règles en fonctions pures.** `RuleEngine` ne connaît pas BabylonJS : il reçoit un état, renvoie une décision. Résultat : on a pu écrire de vrais tests unitaires et corriger les bugs de score sans lancer le jeu.
+
+---
+
+## Journal de bord, galères & défis techniques
+
+> Cette section raconte les vrais problèmes rencontrés. Les points ci-dessous sont **traçables dans l'historique git** du projet.
+
+### 1. Havok refusait de se charger en production (le pire bug)
+Le moteur physique Havok est livré en **WebAssembly** et exige `SharedArrayBuffer`. En local tout marchait ; une fois déployé sur **GitHub Pages**, écran blanc. Le coupable : le binaire `HavokPhysics.wasm` était suivi par **Git LFS**, et GitHub Pages servait le **pointeur texte LFS** au lieu du vrai binaire. Deux corrections successives ont été nécessaires :
+- activer `lfs: true` dans le checkout GitHub Actions,
+- puis **sortir carrément le `.wasm` du LFS** pour qu'il soit servi tel quel.
+
+*(Commits `90ebe66` et `e800e56`.)*
+
+### 2. L'autoplay audio coupé par le navigateur
+Les navigateurs bloquent le son tant qu'il n'y a pas de geste utilisateur. Notre drone d'ambiance d'intro se faisait couper parce qu'un `import()` dynamique se déclenchait **entre** le clic et le `play()`, faisant expirer le « user gesture token ». Solution : **démarrer l'audio en tout premier**, de façon synchrone dans le handler de clic, avant tout préchargement. *(Commit `12ac2c0`.)*
+
+### 3. La balle qui traverse / oscille
+La physique fine d'une petite balle rapide a généré des bugs typiques : tunneling à travers la table, oscillations parasites au repos. D'où une batterie de garde-fous configurables dans `GameConfig.ts` (`antiTunnel*`, `ballOscillation*`, `NO_GROUND_FALL_*`).
+
+## L'équipe
+
+| Nom | Rôle principal |
+| --- | --- |
+| **Bierhoff Theolien** | Moteur physique, IA, architecture |
+| **Mamadou Ougailou Diallo** | Gameplay, UI/HUD, système de scoring |
+| **Jules Stevenson**         | Développeur contributions gameplay & intégration         |
+
+---
+
+## Lancer le projet en local
 
 ```bash
-# Installer les dépendances
+git clone https://github.com/Mamadou-ougailou/teqball-game
+cd teqball-game
 npm install
-
-# Serveur de développement (ouvre le navigateur)
-npm run dev
-
-# Build de production → dossier dist/
-npm run build
-
-# Prévisualiser le build
-npm run preview
+npm run dev      # http://localhost:5173
 ```
 
-### Avec Docker
+> Havok exige `SharedArrayBuffer` (contexte sécurisé). Le serveur Vite et `localhost` remplissent la condition automatiquement.
 
 ```bash
-docker compose up dev     # développement (hot reload, port 5173)
-docker compose up prod    # production via nginx (port 8080)
+npm run build      # build de production → dist/
+npm run typecheck  # vérification TypeScript
+npm test           # tests unitaires (Vitest)
 ```
-
-### Scripts utiles
-
-```bash
-npm test          # tests unitaires (Vitest)
-npm run lint      # ESLint
-npm run typecheck # vérification des types
-npm run format    # Prettier
-```
-
-> ⚠️ La physique Havok utilise `SharedArrayBuffer` : le serveur doit envoyer les en-têtes
-> `Cross-Origin-Opener-Policy: same-origin` et `Cross-Origin-Embedder-Policy: require-corp`
-> (déjà configurés dans `nginx.conf` et `vite.config.ts`).
 
 ---
 
-## 🙏 Crédits
+## Limitations 
+
+Nous préférons être transparents plutôt que survendre :
+
+- **Une seule arène jouable.** Les arènes « Cloud / Rave / Space » visibles au menu sont des aperçus ; le système de variation (`ArenaVariationSystem`) n'est pas encore branché.
+- **Pas de musique pendant le match** (uniquement les effets de balle) désactivée à dessein, à réactiver.
+- **Superpouvoir mappé sur la touche de déplacement gauche** (`Q`/`A`) : à surveiller selon votre clavier.
+- **Pas de support manette** pour l'instant.
+
+## Crédits
 
 Projet réalisé dans le cadre du cours **3D Game Programming (M1 Informatique)** pour le concours
 **IA Edition**. Modèles, animations et sons intégrés par l'équipe ; animations issues de captures
