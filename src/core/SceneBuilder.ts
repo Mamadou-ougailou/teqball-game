@@ -11,7 +11,7 @@ import { BabylonEngine } from './Engine';
 import { SCALE } from '../config/GameConfig';
 
 export class SceneBuilder {
-  public static async createSurrealisticScene(canvas: HTMLCanvasElement, options?: { debug?: boolean }): Promise<{
+  public static async createSurrealisticScene(canvas: HTMLCanvasElement, _options?: { debug?: boolean }): Promise<{
     engine: BabylonEngine;
     scene: Scene;
     camera: ArcRotateCamera;

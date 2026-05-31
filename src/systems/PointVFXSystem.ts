@@ -288,7 +288,7 @@ export class PointVFXSystem implements IEntity {
    * @param power     requestPowerByPlayer value (0.80–1.75)
    * @param teamIndex 0 = P1, 1 = P2
    */
-  activateKickTrail(ballMesh: AbstractMesh, power: number, teamIndex: 0 | 1): void {
+  activateKickTrail(ballMesh: AbstractMesh, power: number, _teamIndex: 0 | 1): void {
     // Stop any previous trail (new kick overrides old one)
     for (const old of this._kickTrails) {
       try { old.stop(); } catch (_) { /* already disposed */ }
@@ -644,7 +644,7 @@ export class PointVFXSystem implements IEntity {
     }
     rootMesh.getChildMeshes(false).forEach((m) => {
       if (m instanceof Mesh && m.getTotalVertices() > 0) {
-        toAdd.push(m as Mesh);
+        toAdd.push(m);
       }
     });
 

@@ -445,6 +445,7 @@ let mainLoadPromise = null;
 let preloadPromise = null;   // resolves when full scene is ready
 let gameStarting = false;
 let gameMod = null;
+let lastLoadedCharId = null; // tracks which character is instantiated in the current scene
 
 /* ── PREFETCH GAME ASSETS ── */
 function prefetchGameAssets() {
@@ -487,12 +488,27 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
       // Already played once → restart via the V2 restartMatch export
       if (gameStarted) {
         if (gameMod && typeof gameMod.restartMatch === 'function') {
-          gameMod.restartMatch();
+          // If the character changed, reload the page so the new model is instantiated
+          if (selectedCharId !== lastLoadedCharId) {
+            sessionStorage.setItem('teq_autostart', selectedCharId);
+            window.location.reload();
+            return;
+          }
+          // Show game screen with a loading indicator while the engine and physics restart.
+          // The in-game serve countdown (HUD) takes over once the engine is running —
+          // no need for the pre-match overlay countdown here.
           app.style.display = 'none';
           backBtn.style.display = 'block';
           document.body.style.cursor = 'default';
           gameScreen.classList.add('active');
-          await showPreMatchCountdown();
+          const restartMsg = loadingScreen.querySelector('p');
+          if (restartMsg) restartMsg.textContent = 'Préparation de la partie…';
+          loadingScreen.classList.add('active');
+          gameMod.restartMatch();
+          // Wait for the engine to have rendered at least one frame before revealing
+          await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+          loadingScreen.classList.remove('active');
+          if (restartMsg) restartMsg.textContent = 'Initializing Surrealistic Teqball...';
         }
         return;
       }
@@ -535,6 +551,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
         gameScreen.classList.remove('preloading');
         gameScreen.classList.add('active');
         gameMod = mod;
+        lastLoadedCharId = selectedCharId;
         if (gameStarted) {
           mod.restartMatch();
         } else {

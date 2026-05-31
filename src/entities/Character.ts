@@ -1,4 +1,4 @@
-import { Vector3, Quaternion } from '@babylonjs/core/Maths/math.vector';
+import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { ICharacter, CharacterState, GameAction, CharacterStats } from '@core/interfaces';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
@@ -611,7 +611,7 @@ export class Character implements ICharacter {
     this._anim.play(desired, true, clampedSpeed, startupTrim);
   }
 
-  performAirAction(action: GameplayAction, ballPosition?: Vector3, mirrorX = false, speedRatio?: number): boolean {
+  performAirAction(action: GameplayAction, ballPosition?: Vector3, _mirrorX = false, speedRatio?: number): boolean {
     if (!this._anim || this._kickTimer > 0) {
       return false;
     }
@@ -623,7 +623,7 @@ export class Character implements ICharacter {
 
     const { clipKey, timer, strikeBone } = definition;
     let autoMirrorByFoot = definition.autoMirrorByFoot;
-    const forceMirror = definition.forceMirror;
+
 
     const animConfig = getAnimConfigForClip(String(clipKey));
 
@@ -811,7 +811,7 @@ export class Character implements ICharacter {
   }
 
   /** Force a specific animation by key (for scripted sequences). */
-  playAnimation(key: PlayerAnimKey  , loop = true, mirrorX = false, onEnd?: () => void): boolean {
+  playAnimation(key: PlayerAnimKey, loop = true, _mirrorX = false, onEnd?: () => void): boolean {
     if (!this._anim || !this._anim.hasClip(key)) {
       return false;
     }
@@ -943,7 +943,7 @@ export class Character implements ICharacter {
     return hit.bone.getAbsolutePosition(this.mesh);
   }
 
-  playAnimationClipByIndex(index: number, loop = false, mirrorX = false, speedRatio = 1.0, onEnd?: () => void): void {
+  playAnimationClipByIndex(index: number, loop = false, _mirrorX = false, speedRatio = 1.0, onEnd?: () => void): void {
     this._setMirrorX(false);
     const clipName = this._anim?.getClipNames()?.[index];
     if (clipName) {

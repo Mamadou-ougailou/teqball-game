@@ -31,10 +31,8 @@ import { UIManager } from './ui/UIManager';
 import { playKickSfx, playApplauseSfx } from './audio/Sfx';
 import type { PointScoredEvent } from './ui/HUD';
 import { Scene } from '@babylonjs/core/scene';
-import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
-import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
@@ -42,15 +40,12 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { ParticleSystem } from '@babylonjs/core/Particles/particleSystem';
 import { TrailMesh } from '@babylonjs/core/Meshes/trailMesh';
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture';
-import { DefaultRenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/defaultRenderingPipeline';
 import { Ball } from './entities/Ball';
 import { Character } from './entities/Character';
 import { PointVFXSystem } from './systems/PointVFXSystem';
 import { CharacterStats } from './core/interfaces';
 import { MatchManager } from './gameplay/MatchManager';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
-import HavokPhysics from '@babylonjs/havok';
-import { HavokPlugin } from '@babylonjs/core/Physics/v2/Plugins/havokPlugin';
 import { PhysicsAggregate } from '@babylonjs/core/Physics/v2/physicsAggregate';
 import { PhysicsBody } from '@babylonjs/core/Physics/v2/physicsBody';
 import { PhysicsShapeType } from '@babylonjs/core/Physics/v2/IPhysicsEnginePlugin';
@@ -80,14 +75,14 @@ import {
   BALL_BOUNCE_RESTITUTION, GLOBAL_KICK_VELOCITY_MULTIPLIER,
   ENABLE_NO_GROUND_FALL_GUARD, NO_GROUND_FALL_TRIGGER_HEIGHT,
   NO_GROUND_FALL_REBOUND_MIN_SPEED, NO_GROUND_FALL_RESTITUTION,
-  NO_GROUND_FALL_LATERAL_DAMPING, getCourtCenterFacing, getLateralReceptionFacing,
-  AI_BEHIND_SERVE_TARGET_Z, AI_PREP_STEP_IN_TARGET_Z, AI_FINAL_KICK_TARGET_Z,
+  NO_GROUND_FALL_LATERAL_DAMPING, getCourtCenterFacing,
+  AI_BEHIND_SERVE_TARGET_Z, AI_FINAL_KICK_TARGET_Z,
   AI_SHORT_RETURN_STEP_IN_Z, AI_LOW_SPEED_RETURN_THRESHOLD,
   SERVE_READY_PAUSE_SECONDS, SERVE_FLIGHT_LOCK_MAX_SECONDS,
   SERVE_TOSS_RIGHT_ANGLE_DEG, SERVE_TOSS_FORWARD_ANGLE_DEG,
   SERVE_TOSS_HEIGHT_MULT, SERVE_TOSS_CONTACT_RIGHT_MAX,
   SERVE_TOSS_CONTACT_FORWARD_MAX, CourtSide, OffensiveAction,
-  SOCKET_HEIGHT_CALIBRATION_ACTIONS, ServePhase, ServeState, ServeType
+  SOCKET_HEIGHT_CALIBRATION_ACTIONS, ServeState, ServeType
 } from './config/GameConfig';
 
 let gameScene: Scene;
@@ -328,7 +323,7 @@ const CELEBRATION_WINDOW_SECONDS = 3.6;
 // finishes.  While true, no kick/reception animations may play — only
 // celebration / defeat clips, and the ball is held at the serve anchor.
 let pointFreezeActive = false;
-let pointFreezeWinner: CourtSide | null = null;
+let _pointFreezeWinner: CourtSide | null = null;
 // Set when awardPoint runs and consumed by the per-frame loop to start the
 // pre-serve countdown after the celebration window expires.  We can't start
 // the countdown immediately or the HUD would overlap the celebration.
@@ -1148,8 +1143,7 @@ export async function main(): Promise<void> {
       }
       // Restore the persistent serve-type preference for this player.
       const serveType: ServeType = serverSide === 0 ? p1ServeType : p2ServeType;
-      const { animKey: serveAnimKey, foot, hand } = serveTypeToProps(serveType);
-      const serveConfig = getAnimConfigForClip(serveAnimKey);
+      const { animKey: _serveAnimKey, foot, hand } = serveTypeToProps(serveType);
       serveState.active = true;
       serveState.server = serverSide;
       serveState.phase = 'ready';
@@ -1328,7 +1322,7 @@ export async function main(): Promise<void> {
       clearRallyState();
 
       pointFreezeActive = true;
-      pointFreezeWinner = scoringTeam === 0 ? 0 : 1;
+      _pointFreezeWinner = scoringTeam === 0 ? 0 : 1;
       celebrationWindowTimer = CELEBRATION_WINDOW_SECONDS;
 
       // Reset positions FIRST (this resets both characters to idle).  Then
@@ -1668,7 +1662,7 @@ export async function main(): Promise<void> {
             //     release frame, making dx ≈ 0 and the arc go straight up/down.
             const FOOT_HIT_Y = 0.58 * SCALE;
             const validBoneY = sampled !== null && sampled.y > servingPlayer.position.y + 0.05;
-            const targetY    = validBoneY ? sampled!.y : servingPlayer.position.y + FOOT_HIT_Y;
+            const targetY    = validBoneY ? sampled.y : servingPlayer.position.y + FOOT_HIT_Y;
             serveState.tossBallTarget = new Vector3(0, targetY, 0);  // XZ placeholder
           } else {
             // Head serves: sampled bone position is reliable for XYZ.
@@ -3475,7 +3469,7 @@ export async function main(): Promise<void> {
     const planInferredAction = (
       player: CourtSide,
       playerPos: Vector3,
-      opponentPos: Vector3,
+      _opponentPos: Vector3,
     ): { phase: TouchPhase; effectivePhase: TouchPhase; action: OffensiveAction; ballBand: HeightBand; reachable: boolean } => {
       const ballSide = sideFromZ(ball.mesh.position.z);
       const phase = getPlannedPhase(player, ballSide);
@@ -4054,6 +4048,7 @@ export async function main(): Promise<void> {
     };
 
     gameScene.registerBeforeRender(() => {
+      if (_isPaused) return;
       if (!ball || !ball.mesh.physicsBody) {
         return;
       }
@@ -4531,8 +4526,8 @@ export async function main(): Promise<void> {
         p2MoveZ = Math.abs(dz) > dead ? Math.sign(dz) : 0;
       }
 
-      const p1TouchPhase = getPlannedPhase(0, sideFromZ(ball.mesh.position.z));
-      const p2TouchPhase = getPlannedPhase(1, sideFromZ(ball.mesh.position.z));
+      const _p1TouchPhase = getPlannedPhase(0, sideFromZ(ball.mesh.position.z));
+      const _p2TouchPhase = getPlannedPhase(1, sideFromZ(ball.mesh.position.z));
       // Keep human receptions steerable so a slightly late or early animation
       // still has a chance to meet the ball instead of freezing in place.
       const p1ReceptionMovementLocked = false;
@@ -4625,7 +4620,7 @@ export async function main(): Promise<void> {
           if (preServeCountdownTimer <= 0) {
             // Countdown finished — release the freeze so play can begin.
             pointFreezeActive = false;
-            pointFreezeWinner = null;
+            _pointFreezeWinner = null;
             EventBus.emit('serve:countdown', null);
           }
         }
@@ -5147,7 +5142,7 @@ export async function main(): Promise<void> {
         request.ttl = 0;
       };
 
-      const tryVicinityInterception = (
+      const _tryVicinityInterception = (
         playerSide: CourtSide,
         request: ActionRequestState,
         character: Character | undefined,
@@ -6743,6 +6738,12 @@ export async function main(): Promise<void> {
       clearPointResultAnimations();
       matchManager.restartMatch();
       resetBallForServe(0);
+      // Refresh HUD display to 0-0 (it only updates on pointScored events)
+      EventBus.emit<PointScoredEvent>('match:pointScored', {
+        team: 1,
+        score: [0, 0],
+        sets: [0, 0],
+      });
     });
 
     // Render loop is started by startGame() — deferred so landing.js
@@ -6795,11 +6796,13 @@ export function togglePause(): void {
   if (_isPaused) {
     _isPaused = false;
     pointFreezeActive = false;
+    if (gameScene) gameScene.physicsEnabled = true;
     _setPauseOverlay(false);
     EventBus.emit('game:resume', undefined);
   } else {
     _isPaused = true;
     pointFreezeActive = true;
+    if (gameScene) gameScene.physicsEnabled = false;
     _setPauseOverlay(true);
     EventBus.emit('game:pause', undefined);
   }
@@ -6809,12 +6812,23 @@ export function freezeGame(): void {
   _menuFreezeActive = true;
   _isPaused = false; // clear any in-game pause so the menu takes over
   pointFreezeActive = true;
+  if (gameScene) gameScene.physicsEnabled = true; // restore physics for next game
   _setPauseOverlay(false);
+  _babylonEngine?.stopRender(); // stop render loop so scene doesn't run in background
+  // Hide in-game DOM overlays so they don't bleed into the menu
+  const superHud = document.getElementById('p1-super-hud');
+  if (superHud) superHud.style.display = 'none';
+  if (_serveSelectorEl) _serveSelectorEl.style.display = 'none';
 }
 
 export function unfreezeGame(): void {
   _menuFreezeActive = false;
   pointFreezeActive = false;
+  // Restart render loop (was stopped by freezeGame)
+  if (_babylonEngine && gameScene) {
+    _babylonEngine.stopRender();
+    _babylonEngine.render(gameScene);
+  }
 }
 
 export function restartMatch(): void {
@@ -6823,6 +6837,11 @@ export function restartMatch(): void {
   _isPaused = false;
   pointFreezeActive = false;
   _setPauseOverlay(false);
+  // Restart render loop (was stopped by freezeGame when returning to menu)
+  if (_babylonEngine && gameScene) {
+    _babylonEngine.stopRender();
+    _babylonEngine.render(gameScene);
+  }
 }
 
 /** No-op shim: V2 has no background music manager. */

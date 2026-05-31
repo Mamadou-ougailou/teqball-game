@@ -176,12 +176,6 @@ const MOVEMENT_KEYS = new Set<PlayerAnimKey>([
 const MOVEMENT_EXCLUDES = ['reception', 'receive', 'control', 'serve', 'kick', 'header', 'knee', 'scissor'];
 const ACTION_EXCLUDES = ['jog', 'run', 'walk', 'strafe', 'move'];
 
-interface BlendState {
-  outgoing: AnimationGroup;
-  incoming: AnimationGroup;
-  elapsed: number;
-  duration: number;
-}
 
 /**
  * AnimationSystem — wraps a flat list of AnimationGroups loaded from a GLB

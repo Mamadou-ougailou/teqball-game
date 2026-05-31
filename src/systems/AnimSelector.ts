@@ -88,7 +88,7 @@ export class AnimSelector {
    * @param tableTopY - table surface Y
    * @param targetZoneX - X center of target table zone (negative = left side)
    */
-  static selectKick(ballPos: Vector3, tableTopY: number, targetZoneX: number): AnimSelection {
+  static selectKick(ballPos: Vector3, tableTopY: number, _targetZoneX: number): AnimSelection {
     const heightAboveTable = ballPos.y - tableTopY;
 
     // Classify horizontal zone based on ball's X position

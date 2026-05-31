@@ -6,7 +6,7 @@ import { BallGuide } from './BallGuide';
 import { AnimSelector, AnimSelection } from './AnimSelector';
 import { AnimTimer } from './AnimTimer';
 import { ZoneSelector, TableZone, SpeedTier } from './ZoneSelector';
-import { getAnimConfigForClip, ANIM_CONFIG_FPS } from '../data/animationConfig';
+import { getAnimConfigForClip } from '../data/animationConfig';
 import { ISceneMetrics } from '../core/SceneMetrics';
 
 export type TouchPhase = 'reception' | 'preparation' | 'kick';
@@ -140,7 +140,7 @@ export class KickSystem {
         } else {
           // Pass the ball's pre-snap position as the reference so foot/knee
           // bone resolution picks whichever side is actually reaching for the ball.
-          const ballNow = this._ball.mesh.position;
+          const _ballNow = this._ball.mesh.position;
           const strikeBonePos = this._player.getStrikeBonePosition();
           // If bone not found, fall back to a sensible height above the root.
           bonePos = strikeBonePos.equals(this._player.mesh.position)

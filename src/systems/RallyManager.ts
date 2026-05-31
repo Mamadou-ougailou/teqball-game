@@ -2,7 +2,7 @@ import { Character } from '../entities/Character';
 import { Ball } from '../entities/Ball';
 import { PhaseController } from '../gameplay/PhaseController';
 import { KickSystem, TouchPhase } from './KickSystem';
-import { ZoneSelector, TableZone, SpeedTier } from './ZoneSelector';
+import { TableZone, SpeedTier } from './ZoneSelector';
 import { ISceneMetrics } from '../core/SceneMetrics';
 
 export type RallyState =
@@ -89,7 +89,7 @@ export class RallyManager {
   /** Call when serve ball bounces on receiver's side and rally should begin. */
   notifyServeComplete(): void {
     this._state = 'RECEPTION_OPEN';
-    this._activePlayerIndex = (this._serverIndex === 0 ? 1 : 0) as 0 | 1;
+    this._activePlayerIndex = (this._serverIndex === 0 ? 1 : 0);
     this._phases[this._activePlayerIndex].beginReception();
     this._stateTimer = 0;
     this._options.onServeComplete?.();
@@ -215,13 +215,13 @@ export class RallyManager {
   }
 
   private _handleFault(): void {
-    const scorer: 0 | 1 = (this._activePlayerIndex === 0 ? 1 : 0) as 0 | 1;
+    const scorer: 0 | 1 = (this._activePlayerIndex === 0 ? 1 : 0);
     this._state = 'FAULT';
     this._options.onFault?.(scorer);
   }
 
   private _switchActivePlayer(): void {
-    this._activePlayerIndex = (this._activePlayerIndex === 0 ? 1 : 0) as 0 | 1;
+    this._activePlayerIndex = (this._activePlayerIndex === 0 ? 1 : 0);
     const newActive = this._activePlayerIndex;
     this._phases[newActive].beginReception();
     this._kickSystems[newActive].reset();
